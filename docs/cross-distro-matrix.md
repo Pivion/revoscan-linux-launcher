@@ -6,7 +6,7 @@ No distro family is yet marked fully supported. Pin concrete image tags and reco
 |---|---|---|---|---|---|
 | Ubuntu | 22.04 builder image + Xvfb | passed | not fully tested | no GPU | partial |
 | Debian | 12 slim + Xvfb | passed | 64-bit prefix created; container lacked Vulkan/desktop driver | no GPU | partial |
-| Pop!_OS | 24.04 desktop; 0.1.1 AppImage | CLI Wine/TLS checks pass | RevoScan6's X11 window remains unmapped under system and bundled Wine; a bundled run later exited with Crashpad exception `0xe06d7363`; bundled Notepad maps normally | POP 4 detected by an earlier system-Wine run; no scan | failed for Revo Scan UI |
+| Pop!_OS | 24.04 desktop; 0.1.2 AppImage | CLI Wine/TLS checks pass | 0.1.1 failed: RevoScan6 died at `rvscan` plugin start (window never mapped) because Wine's `winebth` driver exposed the host BlueZ radio and `simpleble.dll` hit still-stubbed WinRT Bluetooth APIs (`E_NOTIMPL`). 0.1.2 strips the driver from the bundled Wine and sanitizes prefixes; full UI launches and renders on the COSMIC Wayland session (`DISPLAY=:1`) | POP 4 detected by an earlier system-Wine run; no scan | passes for Revo Scan UI on 0.1.2; BLE scanner discovery disabled (WLAN unaffected) |
 | Fedora | 44 container + Xvfb | timed out during WineBoot | inconclusive | no GPU | not passed |
 | openSUSE | pinned Leap image + Xvfb | not run | not run | not run | untested |
 | Arch Linux | pinned image + Xvfb | not run | not run | not run | untested |

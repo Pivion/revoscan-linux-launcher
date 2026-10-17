@@ -36,7 +36,9 @@ See [AGENTS.md](AGENTS.md), [PROGRESS.md](PROGRESS.md), and `docs/` before chang
 
 ## Status
 
-A public-clean x86_64 preview AppImage is built at `dist/RevoScan-Linux-Launcher-0.1.1-x86_64.AppImage` (about 412 MB). It starts the launcher first and contains Wine 11.0 Staging, the launcher, bundled certifi roots, the opt-in Vulkan layer, and notices—but no Revo Scan software or installer. The official download resolver returns the currently advertised 6.4.1.1088 link; the installer itself was not downloaded.[1]
+A public-clean x86_64 preview AppImage is built at `dist/RevoScan-Linux-Launcher-0.1.2-x86_64.AppImage` (about 412 MB). It starts the launcher first and contains Wine 11.0 Staging, the launcher, bundled certifi roots, the opt-in Vulkan layer, and notices—but no Revo Scan software or installer. The official download resolver returns the currently advertised 6.4.1.1088 link; the installer itself was not downloaded.[1]
+
+0.1.2 fixes the Revo Scan startup crash on hosts with a Bluetooth radio (Pop!_OS): Wine's `winebth` driver is stripped from the bundled runtime and prefixes are sanitized, because Revo Scan's `simpleble.dll` calls WinRT Bluetooth APIs that Wine still stubs with `E_NOTIMPL`. Consequence: Bluetooth/BLE scanner discovery is unavailable in this build (WLAN-connected scanners are unaffected).
 
 The run-installer button refreshes after selecting a valid local installer or after a successful download. The packaged `--check-latest-installer` diagnostic verifies bundled CA roots; `--check-wine` checks the bundled Wine executable without touching the user's prefix. AppRun now preserves the host library path separately, so Wine and desktop openers do not inherit PyInstaller's temporary libraries. The Ubuntu 22.04 Xvfb smoke and public-payload audit pass; Python and C tests pass. Debian 12 had a partial launcher/Wine prefix smoke. Fedora 44, openSUSE, and Arch still need target testing; this is not yet a verified “works on any distro” release and has not been uploaded.
 

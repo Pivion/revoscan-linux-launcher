@@ -17,7 +17,7 @@ from .installer import (
     download_official_installer,
     fetch_latest_official_installer,
 )
-from .runtime import build_revoscan_environment, installed_executable
+from .runtime import build_revoscan_environment, installed_executable, sanitize_bluetooth
 
 
 def desktop_opener_environment(base_env: dict[str, str] | None = None) -> dict[str, str]:
@@ -289,6 +289,7 @@ class Launcher:
             return
         self.data_dir.mkdir(parents=True, exist_ok=True)
         env = build_revoscan_environment(self._appdir_for_runtime(), self.prefix, None, None)
+        self._sanitize_prefix(env)
         env["WINELOADER"] = str(wine)
         try:
             process = subprocess.Popen([str(wine), str(installer)], env=env, cwd=str(installer.parent))
@@ -318,6 +319,7 @@ class Launcher:
             env = build_revoscan_environment(
                 self._appdir_for_runtime(), self.prefix, adapter, target
             )
+            self._sanitize_prefix(env)
             env["WINELOADER"] = str(wine)
             subprocess.Popen([str(wine), str(executable)], env=env, cwd=str(executable.parent))
             if target:
@@ -328,6 +330,14 @@ class Launcher:
                 self.status.set("Started Revo Scan without GPU identity mapping.")
         except (OSError, ValueError) as exc:
             messagebox.showerror("Could not launch Revo Scan", str(exc), parent=self.root)
+
+    def _sanitize_prefix(self, env: dict[str, str]) -> None:
+        """Strip Wine's Bluetooth driver from the prefix before wine runs."""
+        removed = sanitize_bluetooth(self.prefix)
+        if removed:
+            self.status.set(
+                "Removed Wine Bluetooth driver from the prefix: " + ", ".join(removed)
+            )
 
     def open_prefix(self) -> None:
         self.prefix.mkdir(parents=True, exist_ok=True)

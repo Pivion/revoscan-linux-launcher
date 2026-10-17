@@ -4,7 +4,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 APPDIR="$ROOT/build/AppDir"
 VENV="$ROOT/build/python-builder"
 APPIMAGE_TOOL="$ROOT/tools/cache/appimagetool-x86_64.AppImage"
-OUT="$ROOT/dist/RevoScan-Linux-Launcher-0.1.1-x86_64.AppImage"
+OUT="$ROOT/dist/RevoScan-Linux-Launcher-0.1.2-x86_64.AppImage"
 
 if [[ ! -d /opt/wine-staging ]]; then
     printf 'This builder requires WineHQ Staging staged at /opt/wine-staging.\n' >&2
@@ -55,6 +55,16 @@ cp -a /opt/wine-staging "$APPDIR/opt/"
 rm -rf "$APPDIR/opt/wine-staging/lib/wine/i386-unix"
 ln -sfn ../../opt/wine-staging/lib/wine/x86_64-unix/wine "$APPDIR/usr/bin/wine64"
 ln -sfn ../../opt/wine-staging/bin/wineserver "$APPDIR/usr/bin/wineserver64"
+
+# Never ship Wine's Bluetooth driver. When a host BlueZ radio exists, the
+# winebth driver exposes it and Revo Scan's simpleble.dll hits still-stubbed
+# WinRT Bluetooth APIs (E_NOTIMPL), whose exception escapes rvscan plugin
+# activation and kills the app before its window maps. Without a radio the app
+# logs "BluetoothManager init error" and continues. See PROGRESS.md.
+rm -f "$APPDIR/opt/wine-staging/lib/wine/x86_64-windows/winebth.sys" \
+      "$APPDIR/opt/wine-staging/lib/wine/i386-windows/winebth.sys" \
+      "$APPDIR/opt/wine-staging/lib/wine/x86_64-unix/winebth.so" \
+      "$APPDIR/opt/wine-staging/lib/wine/i386-unix/winebth.so"
 
 for notice in /usr/share/doc/wine-staging/copyright \
               /usr/share/doc/wine-staging-amd64/copyright \

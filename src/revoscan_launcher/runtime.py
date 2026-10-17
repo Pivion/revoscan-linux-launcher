@@ -67,3 +67,67 @@ def build_revoscan_environment(
 
 def installed_executable(prefix: Path) -> Path:
     return Path(prefix) / "drive_c/Program Files/Revo Scan 6/RevoScan6.exe"
+
+
+def sanitize_bluetooth(prefix: Path) -> list[str]:
+    """Remove Wine's Bluetooth radio from a prefix so Revo Scan can start.
+
+    Revo Scan's simpleble.dll calls WinRT Bluetooth APIs
+    (BluetoothAdapter::FromIdAsync, DeviceInformation::CreateFromIdAsync)
+    during rvscan plugin activation. Whenever a host BlueZ radio exists, Wine's
+    winebth driver exposes it, and those still-stubbed WinRT APIs return
+    E_NOTIMPL; the exception escapes the plugin start and the app dies before
+    showing its window. On radio-less hosts simpleble fails gracefully, so the
+    fix is to never expose a radio: strip the bundled winebth driver (build
+    time) and remove any staged driver or registration from existing prefixes.
+    """
+    prefix = Path(prefix)
+    if not prefix.is_dir():
+        return []
+    removed: list[str] = []
+    for relative in (
+        "drive_c/windows/system32/drivers/winebth.sys",
+        "drive_c/windows/syswow64/drivers/winebth.sys",
+    ):
+        staged = prefix / relative
+        if staged.is_file():
+            staged.unlink()
+            removed.append(relative)
+
+    reg_path = prefix / "system.reg"
+    if reg_path.is_file():
+        try:
+            original = reg_path.read_text(encoding="utf-8", errors="surrogateescape")
+        except OSError:
+            return removed
+        cleaned, dropped = _drop_winebth_sections(original)
+        if dropped:
+            reg_path.write_text(cleaned, encoding="utf-8", errors="surrogateescape")
+            removed.append(f"system.reg ({dropped} sections)")
+    return removed
+
+
+def _drop_winebth_sections(content: str) -> tuple[str, int]:
+    lines = content.splitlines(keepends=True)
+    kept: list[str] = []
+    dropped = 0
+    skipping = False
+    for line in lines:
+        if line.startswith("["):
+            skipping = (
+                "\\Services\\winebth" in line
+                or "\\Enum\\winebth" in line
+                or ("winebth" in line and ("\\Services\\" in line or "\\Enum\\" in line))
+            )
+            if skipping:
+                dropped += 1
+                continue
+        elif skipping:
+            # Swallow value lines and their continuations. Blank lines belong
+            # to no section; continuation lines end before the next header.
+            if line.strip() == "":
+                continue
+            continue
+        kept.append(line)
+    return "".join(kept), dropped
+
