@@ -1,0 +1,28 @@
+FROM docker.io/library/ubuntu@sha256:98510ac07bb4545e389be502a8918b385c018bfe4ceeb5ac7e0375c782268b04
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG WINEHQ_VERSION=11.0.0~jammy-1
+ENV DEBIAN_FRONTEND=${DEBIAN_FRONTEND}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl gnupg \
+      python3 python3-dev python3-pip python3-venv python3-tk \
+      build-essential binutils patchelf file desktop-file-utils \
+      squashfs-tools xz-utils libvulkan-dev \
+      xvfb xauth x11-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN install -d -m 0755 /usr/share/keyrings \
+    && curl -fsSL https://dl.winehq.org/wine-builds/winehq.key \
+       | gpg --dearmor -o /usr/share/keyrings/winehq-archive.key
+COPY packaging/winehq-jammy.list /etc/apt/sources.list.d/winehq.list
+RUN dpkg --add-architecture i386 \
+    && apt-get update \
+    && apt-get install -y --install-recommends \
+       "winehq-staging=${WINEHQ_VERSION}" \
+       "wine-staging=${WINEHQ_VERSION}" \
+       "wine-staging-amd64=${WINEHQ_VERSION}" \
+       "wine-staging-i386:i386=${WINEHQ_VERSION}" \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src

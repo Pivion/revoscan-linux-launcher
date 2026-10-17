@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "revoscan-linux-launcher"
+version = "0.1.1"
+description = "Unofficial launcher for Revo Scan 6 under Wine on Linux"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = ["certifi==2026.7.22"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

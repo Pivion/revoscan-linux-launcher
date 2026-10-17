@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Revo Scan Linux Launcher
+Comment=Unofficial Wine launcher for Revo Scan 6
+Exec=AppRun
+Icon=revoscan-linux-launcher
+Terminal=false
+Categories=Graphics;3DGraphics;
+StartupNotify=true

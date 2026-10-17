@@ -1,0 +1,10 @@
+This public AppImage bundles or incorporates the following open-source components. Their full notices are included where available under usr/share/licenses/revoscan-linux-launcher/.
+
+- Wine Staging 11.0.0 (WineHQ Ubuntu 22.04 packages): LGPL-2.1-or-later; source and package information: https://www.winehq.org/
+- Python 3.10 and Tcl/Tk from Ubuntu 22.04: PSF/Tcl licensing; see the copied copyright files.
+- PyInstaller 6.22.3: see the copied PyInstaller license and its bootloader exception.
+- certifi 2026.7.22: Mozilla Public License 2.0; see the copied certifi license.
+- Khronos Vulkan-Headers (commit acbb9391c0a597272800cd3f4363661c00a27c77): Apache-2.0 OR MIT; see vendor/Vulkan-Headers/LICENSE.md.
+- AppImage type-2 runtime is embedded by appimagetool from AppImage's official release. See the upstream runtime project and license: https://github.com/AppImage/type2-runtime
+
+The launcher and Vulkan mapping layer are MIT-licensed. Revopoint/Revo Scan software is not bundled and remains subject to its separate vendor license.

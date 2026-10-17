@@ -1,0 +1,12 @@
+.git
+.venv
+__pycache__
+local
+build
+dist
+tools/cache
+*.AppImage
+*.exe
+*.msi
+*.revox
+*.log

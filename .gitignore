@@ -1,0 +1,26 @@
+# Private/local inputs: never publish vendor installers or installed prefixes.
+/local/**
+!/local/README.md
+
+# Generated build outputs; public releases belong in GitHub Releases.
+/build/
+/dist/*.AppImage
+/dist/*.tar.*
+/tools/cache/**
+
+# User content, credentials, logs, and runtime state.
+*.exe
+*.msi
+*.revox
+*.ply
+*.stl
+*.log
+.env
+.env.*
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+*.egg-info/

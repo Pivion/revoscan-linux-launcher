@@ -1,0 +1,15 @@
+{
+  "file_format_version": "1.2.0",
+  "layer": {
+    "name": "VK_LAYER_REVOSCAN_LINUX_GPU_MAP",
+    "type": "GLOBAL",
+    "library_path": "librevoscan_gpu_map.so",
+    "api_version": "1.1.0",
+    "implementation_version": "1",
+    "description": "Opt-in Revo Scan Vulkan adapter identity mapping",
+    "functions": {
+      "vkGetInstanceProcAddr": "vkGetInstanceProcAddr",
+      "vkNegotiateLoaderLayerInterfaceVersion": "vkNegotiateLoaderLayerInterfaceVersion"
+    }
+  }
+}
