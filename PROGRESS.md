@@ -41,7 +41,7 @@
 
 - Built `dist/RevoScan-Linux-Launcher-0.1.3-x86_64.AppImage` in the pinned Ubuntu 22.04 / glibc 2.35 podman builder (WineHQ Staging 11.0.0~jammy-1, PyInstaller 6.22.3, certifi 2026.7.22): 411,826,680 bytes, SHA-256 `37e10be9483e0bd3c3b594cabcc21844e037e7a753e7efbbbfc8a1a51d3b6b38`.
 - Verified on the artifact itself: public-payload audit passed on both AppDir and AppImage; the builder's Xvfb GUI smoke left the launcher event loop running (expected timeout 124); `--check-wine` returned `wine-11.0 (Staging)`; `--vulkan-check` loaded the bundled layer from `APPDIR` and reported "Mapping applied" with the mapped identity. The bundled manifest now carries `./librevoscan_gpu_map.so`, and the bundled `.so` was rebuilt from current source (76,728 bytes).
-- Not uploaded yet: the GitHub remote requires credentials this session does not have. Tag `v0.1.3` and the commit are local.
+- Published as GitHub release `v0.1.3` (https://github.com/Pivion/revoscan-linux-launcher/releases/tag/v0.1.3) with the AppImage and `SHA256SUMS`. GitHub's own asset digest matches the local checksum `37e10be9483e0bd3c3b594cabcc21844e037e7a753e7efbbbfc8a1a51d3b6b38`.
 
 ## In progress
 - Complete the distro matrix with pinned Ubuntu, Debian, Fedora, openSUSE, and Arch environments; the current artifact is still experimental.
