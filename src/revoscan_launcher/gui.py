@@ -222,7 +222,11 @@ class Launcher:
         enabled = self.mapping_enabled.get() and supported
         self.target_combo.configure(state="readonly" if enabled else "disabled")
         if self.mapping_enabled.get() and not supported:
-            self.status.set("Mapping supports AMD or Intel source adapters; choose one or leave mapping disabled.")
+            self.status.set(
+                "Mapping supports AMD or Intel source adapters; choose one or leave mapping disabled. "
+                "Note: Wine enumerates Vulkan layers but does not chain them, so Revo Scan may still "
+                "report its real GPU — run --vulkan-check to see the host identity."
+            )
 
     def refresh_wifi_devices(self) -> None:
         try:

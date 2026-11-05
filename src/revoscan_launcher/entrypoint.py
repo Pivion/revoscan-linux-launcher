@@ -43,6 +43,67 @@ def check_bundled_wine(output: TextIO) -> int:
     return completed.returncode
 
 
+def check_vulkan_identity(output: TextIO) -> int:
+    """Report the GPU identity Vulkan consumers see, with mapping applied.
+
+    Runs the host ``vulkaninfo --summary`` with the same mapping environment
+    the launcher builds, so the user can verify what an app would read.
+    """
+    import shutil
+
+    vulkaninfo = shutil.which("vulkaninfo")
+    if not vulkaninfo:
+        print(
+            "vulkaninfo is not installed (install the vulkan-tools package); "
+            "cannot run the Vulkan identity check.",
+            file=output,
+        )
+        return 2
+    from revoscan_launcher.gpu import AMD_TARGETS, build_mapping_environment, detect_adapters
+
+    try:
+        adapters = detect_adapters()
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"GPU detection failed: {exc}", file=output)
+        return 1
+    source = next((a for a in adapters if a.vendor in {"amd", "intel"}), None)
+    if source is None:
+        print("No AMD or Intel adapter detected; nothing to map.", file=output)
+        return 0
+    target = AMD_TARGETS["rx-7700-xt"]
+    mapping_env = build_mapping_environment(source, target)
+    mapping_env["VK_INSTANCE_LAYERS"] = "VK_LAYER_REVOSCAN_LINUX_GPU_MAP"
+    print(
+        f"Mapping profile: {source.identity} ({source.name}) -> {target.name}",
+        file=output,
+    )
+    try:
+        completed = subprocess.run(
+            ["vulkaninfo", "--summary"],
+            env={**os.environ, **mapping_env},
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"vulkaninfo run failed: {exc}", file=output)
+        return 1
+    summary = completed.stdout
+    for line in summary.splitlines():
+        if "vendorID" in line or "deviceID" in line or "deviceName" in line:
+            print(line.strip(), file=output)
+    if target is not None:
+        print(f"Mapping target requested: {target.name}", file=output)
+        print(
+            "Note: under Wine, explicit Vulkan layers are enumerated but not chained, "
+            "so this identity is what the host sees; Revo Scan running under Wine may still "
+            "report its real GPU.",
+            file=output,
+        )
+    return completed.returncode
+
+
 def run(
     main_function: Callable[[], None] | None = None,
     argv: Sequence[str] | None = None,
@@ -58,6 +119,8 @@ def run(
         return 0
     if args == ["--check-wine"]:
         return check_bundled_wine(output)
+    if args == ["--vulkan-check"]:
+        return check_vulkan_identity(output)
     if main_function is None:
         from revoscan_launcher.gui import main as main_function
     main_function()
