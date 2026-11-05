@@ -18,8 +18,17 @@ SCANNER_SSID_PATTERN = re.compile(r"revo|revopoint|miraco|pop\s?\d", re.IGNORECA
 
 
 def is_scanner_ssid(ssid: str) -> bool:
-    """Match the AP names Revopoint scanners broadcast."""
+    """Match known Revopoint AP naming (POP4-REVO-…, MIRACO-…).
+
+    This is a hint, not a requirement: any open (security-less) AP is treated
+    as a scanner candidate, since compatible scanners may use other SSIDs.
+    """
     return bool(ssid) and bool(SCANNER_SSID_PATTERN.search(ssid))
+
+
+def is_scanner_candidate(network: WifiNetwork) -> bool:
+    """A vendor-named SSID, or any open network a scanner could expose."""
+    return is_scanner_ssid(network.ssid) or network.security == ""
 
 
 @dataclass(frozen=True)
@@ -92,8 +101,17 @@ def scan_networks(device: str | None = None, runner=_run) -> list[WifiNetwork]:
 
 
 def find_scanner_network(networks: list[WifiNetwork]) -> WifiNetwork | None:
-    scanner = [net for net in networks if net.is_scanner]
-    return max(scanner, key=lambda net: net.signal, default=None)
+    candidates = [net for net in networks if is_scanner_candidate(net)]
+    return max(candidates, key=lambda net: (is_scanner_ssid(net.ssid), net.signal), default=None)
+
+
+def scanner_candidates(networks: list[WifiNetwork]) -> list[WifiNetwork]:
+    """Candidate scanner APs, vendor-named first, then strongest open APs."""
+    return sorted(
+        (net for net in networks if is_scanner_candidate(net)),
+        key=lambda net: (is_scanner_ssid(net.ssid), net.signal),
+        reverse=True,
+    )
 
 
 def _uuid_for_device(device: str, runner=_run) -> str | None:

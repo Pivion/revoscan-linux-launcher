@@ -9,6 +9,7 @@ from revoscan_launcher.network import (
     connect_network,
     default_route_device,
     device_gateway,
+    scanner_candidates,
     find_scanner_network,
     is_scanner_ssid,
     make_connection_never_default,
@@ -68,6 +69,22 @@ class ScanTests(unittest.TestCase):
         ]
         self.assertEqual(find_scanner_network(nets).ssid, "POP4-REVO-2")
         self.assertIsNone(find_scanner_network([nets[2]]))
+
+    def test_open_network_is_candidate_even_without_vendor_name(self):
+        nets = [
+            WifiNetwork("MyPrinter-AP", "aa:aa", "", 60, 6),
+            WifiNetwork("Home", "cc:cc", "WPA2", 90, 11),
+        ]
+        self.assertEqual(find_scanner_network(nets).ssid, "MyPrinter-AP")
+        candidates = scanner_candidates(nets)
+        self.assertEqual([net.ssid for net in candidates], ["MyPrinter-AP"])
+
+    def test_candidates_put_vendor_named_first(self):
+        nets = [
+            WifiNetwork("FreeWifi", "aa:aa", "", 95, 6),
+            WifiNetwork("POP4-REVO-D2682977", "bb:bb", "", 50, 149),
+        ]
+        self.assertEqual([net.ssid for net in scanner_candidates(nets)][0], "POP4-REVO-D2682977")
 
 
 class DeviceTests(unittest.TestCase):

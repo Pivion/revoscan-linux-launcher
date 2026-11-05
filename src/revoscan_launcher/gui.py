@@ -22,10 +22,10 @@ from .network import (
     WifiNetwork,
     connect_network,
     default_route_device,
-    find_scanner_network,
+    device_gateway,
+    scanner_candidates,
     scan_networks,
     scanner_reachable,
-    device_gateway,
     wifi_devices,
 )
 from .runtime import build_revoscan_environment, installed_executable, sanitize_bluetooth
@@ -149,8 +149,10 @@ class Launcher:
         wifi_row = ttk.Frame(gpu_box)
         wifi_row.pack(fill="x", pady=(8, 0))
         ttk.Button(wifi_row, text="Scan for scanner network", command=self.scan_for_scanner).pack(side="left")
-        self.connect_button = ttk.Button(wifi_row, text="Connect scanner network", command=self.connect_scanner, state="disabled")
-        self.connect_button.pack(side="left", padx=8)
+        self.network_combo = ttk.Combobox(wifi_row, state="disabled", width=34)
+        self.network_combo.pack(side="left", padx=8)
+        self.connect_button = ttk.Button(wifi_row, text="Connect", command=self.connect_scanner, state="disabled")
+        self.connect_button.pack(side="left")
         self.wifi_status = tk.StringVar(value="Scan to find the scanner's access point (SSID like POP4-REVO-…).")
         ttk.Label(gpu_box, textvariable=self.wifi_status, wraplength=700).pack(anchor="w", pady=(8, 0))
         self.scanner_networks: list[WifiNetwork] = []
@@ -261,25 +263,41 @@ class Launcher:
 
     def _wifi_scan_done(self, networks: list[WifiNetwork]) -> None:
         self.scanner_networks = networks
-        scanner = find_scanner_network(networks)
-        if scanner:
-            self.wifi_status.set(
-                f"Scanner network found: {scanner.ssid} (BSSID {scanner.bssid}, "
-                f"channel {scanner.channel}, security {scanner.security or 'open'}, signal {scanner.signal})."
-            )
+        candidates = scanner_candidates(networks)
+        if candidates:
+            labels = [
+                f"{net.ssid} · {net.security or 'open'} · ch{net.channel} · {net.signal}%"
+                for net in candidates
+            ]
+            self.network_combo["values"] = labels
+            self.network_combo.current(0)
+            self.network_combo.configure(state="readonly")
             self.connect_button.configure(state="normal")
-        else:
             self.wifi_status.set(
-                "No scanner access point found. Power the scanner on and make sure its Wi-Fi/AP mode is enabled, then scan again."
+                f"{len(candidates)} candidate scanner access point(s) found "
+                "(vendor-named first, then open networks). Pick one and connect."
             )
+        else:
+            self.network_combo.set("")
+            self.network_combo.configure(state="disabled")
             self.connect_button.configure(state="disabled")
+            self.wifi_status.set(
+                "No candidate scanner access point found. Power the scanner on, enable its Wi-Fi/AP mode, then scan again."
+            )
+
+    def _selected_scanner_network(self) -> WifiNetwork | None:
+        index = self.network_combo.current()
+        candidates = scanner_candidates(self.scanner_networks)
+        if 0 <= index < len(candidates):
+            return candidates[index]
+        return None
 
     def connect_scanner(self) -> None:
         device = self._selected_wifi_device()
         if not device:
             self.wifi_status.set("Select a Wi-Fi adapter first.")
             return
-        scanner = find_scanner_network(self.scanner_networks)
+        scanner = self._selected_scanner_network()
         if not scanner:
             self.wifi_status.set("Scan for the scanner network first.")
             return
