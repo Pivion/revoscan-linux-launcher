@@ -5,6 +5,7 @@
 #include <vulkan/vulkan.h>
 
 #define REVOSCAN_GPU_TARGET_VENDOR_AMD 0x1002u
+#define REVOSCAN_GPU_TARGET_VENDOR_INTEL 0x8086u
 
 typedef struct GpuMap {
     int enabled;

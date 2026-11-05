@@ -38,13 +38,15 @@ class GpuTarget:
     key: str
     name: str
     vendor_id: int = 0x1002
+    device_id: int = 0
 
 
 # These are selectable reported identities, not claims about real compute support.
 AMD_TARGETS = {
-    "rx-7700-xt": GpuTarget("rx-7700-xt", "AMD Radeon RX 7700 XT"),
-    "rx-9070-xt": GpuTarget("rx-9070-xt", "AMD Radeon RX 9070 XT"),
-    "rx-6750-gre": GpuTarget("rx-6750-gre", "AMD Radeon RX 6750 GRE"),
+    "rx-7700-xt": GpuTarget("rx-7700-xt", "AMD Radeon RX 7700 XT", 0x1002, 0x7480),
+    "rx-9070-xt": GpuTarget("rx-9070-xt", "AMD Radeon RX 9070 XT", 0x1002, 0x7550),
+    "rx-6750-gre": GpuTarget("rx-6750-gre", "AMD Radeon RX 6750 GRE", 0x1002, 0x7470),
+    "intel-b580": GpuTarget("intel-b580", "Intel(R) Arc(TM) B580 Graphics", 0x8086, 0xE202),
 }
 
 
@@ -107,8 +109,8 @@ def build_mapping_environment(
         return {}
     if source.vendor not in {"amd", "intel"}:
         raise ValueError("Only AMD and Intel source adapters have mapping profiles.")
-    if target.vendor_id != 0x1002 or target.key not in AMD_TARGETS:
-        raise ValueError("Target must be one of the built-in AMD profiles.")
+    if target.key not in AMD_TARGETS or target != AMD_TARGETS[target.key]:
+        raise ValueError("Target must be one of the built-in mapping profiles.")
     return {
         "REVOSCAN_MAP_SOURCE_VENDOR": f"{source.vendor_id:04x}",
         "REVOSCAN_MAP_SOURCE_DEVICE": f"{source.device_id:04x}",

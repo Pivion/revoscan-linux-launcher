@@ -23,12 +23,19 @@ from .network import (
     connect_network,
     default_route_device,
     device_gateway,
+    ensure_firewall_allows,
     scanner_candidates,
     scan_networks,
     scanner_reachable,
     wifi_devices,
 )
-from .runtime import build_revoscan_environment, installed_executable, sanitize_bluetooth
+from .runtime import (
+    build_revoscan_environment,
+    clear_wine_gpu_override,
+    installed_executable,
+    sanitize_bluetooth,
+    set_wine_gpu_override,
+)
 
 
 def desktop_opener_environment(base_env: dict[str, str] | None = None) -> dict[str, str]:
@@ -63,7 +70,7 @@ class Launcher:
         self.selected_adapter: GpuAdapter | None = None
         self.adapter_items: list[GpuAdapter] = []
         self.mapping_enabled = tk.BooleanVar(value=False)
-        self.target_key = tk.StringVar(value="rx-7700-xt")
+        self.target_key = tk.StringVar(value="intel-b580")
         self.status = tk.StringVar(value="Choose a Revo Scan Windows installer to begin.")
         self._busy = False
 
@@ -127,12 +134,13 @@ class Launcher:
         self.target_combo.pack(side="left", padx=8)
         self.target_combo.configure(values=tuple(t.name for t in AMD_TARGETS.values()))
         self._target_by_name = {t.name: t for t in AMD_TARGETS.values()}
-        self.target_combo.set(AMD_TARGETS["rx-7700-xt"].name)
+        self.target_combo.set(AMD_TARGETS["intel-b580"].name)
         ttk.Label(
             gpu_box,
             text=(
-                "Mapping changes Vulkan identity only; it adds no GPU features. Intel→AMD is unverified. "
-                "Do not enable unless you accept possible instability and unsupported behavior."
+                "Mapping changes the reported Vulkan and DirectX identities; it adds no GPU features. "
+                "Targets: AMD RX profiles and Intel Arc B580. Do not enable unless you accept "
+                "possible instability and unsupported behavior."
             ),
             foreground="#9a4b00",
             wraplength=700,
@@ -314,13 +322,17 @@ class Launcher:
             gateway = device_gateway(device) if ok else None
             reachable = scanner_reachable(gateway) if gateway else False
             route_owner = default_route_device() if ok else None
+            firewall_ok, firewall_msg = ensure_firewall_allows(gateway) if gateway else (True, "")
         except Exception as exc:
             self.root.after(0, lambda error=exc: self.wifi_status.set(f"Connection failed: {error}"))
             return
-        self.root.after(0, lambda: self._wifi_connect_done(device, scanner, ok, gateway, reachable, route_owner))
+        self.root.after(
+            0, lambda: self._wifi_connect_done(device, scanner, ok, gateway, reachable, route_owner, firewall_msg)
+        )
 
     def _wifi_connect_done(
-        self, device: str, scanner: WifiNetwork, ok: bool, gateway: str | None, reachable: bool, route_owner: str | None
+        self, device: str, scanner: WifiNetwork, ok: bool, gateway: str | None, reachable: bool,
+        route_owner: str | None, firewall_msg: str = ""
     ) -> None:
         if not ok:
             self.wifi_status.set(f"Could not connect {device} to {scanner.ssid}. Check the network password or adapter state.")
@@ -331,6 +343,8 @@ class Launcher:
             notes.append(f"scanner reachable at {gateway}")
         else:
             notes.append("scanner gateway not responding yet (it may take a few seconds)")
+        if firewall_msg:
+            notes.append(firewall_msg)
         if route_owner and route_owner != device:
             notes.append(f"internet default route stays on {route_owner}")
         elif route_owner == device:
@@ -468,10 +482,19 @@ class Launcher:
             )
             self._sanitize_prefix(env)
             env["WINELOADER"] = str(wine)
+            if target:
+                # Revo Scan's visible GPU list reads DirectX/DXGI, which the
+                # Vulkan layer cannot influence; Wine's Direct3D registry
+                # overrides spoof that side as well.
+                override_report = set_wine_gpu_override(self.prefix, wine, env, target)
+                self.status.set("GPU override registry: " + "; ".join(override_report))
+            else:
+                clear_wine_gpu_override(self.prefix, wine, env)
             subprocess.Popen([str(wine), str(executable)], env=env, cwd=str(executable.parent))
             if target:
                 self.status.set(
-                    f"Started Revo Scan. Mapping {adapter.name if adapter else 'selected GPU'} to {target.name}; verify GPU use in the app."
+                    f"Started Revo Scan. Mapping {adapter.name if adapter else 'selected GPU'} to {target.name} "
+                    "(Vulkan identity + Direct3D overrides); verify GPU use in the app."
                 )
             else:
                 self.status.set("Started Revo Scan without GPU identity mapping.")

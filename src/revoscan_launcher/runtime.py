@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import subprocess
 
 from .gpu import GpuAdapter, GpuTarget, build_mapping_environment
 
@@ -67,6 +68,55 @@ def build_revoscan_environment(
 
 def installed_executable(prefix: Path) -> Path:
     return Path(prefix) / "drive_c/Program Files/Revo Scan 6/RevoScan6.exe"
+
+
+_D3D_KEY = "HKCU\\Software\\Wine\\Direct3D"
+
+
+def _wine_reg(wine: Path, env: dict[str, str], args: list[str]) -> tuple[bool, str]:
+    try:
+        completed = subprocess.run(
+            [str(wine), "reg", *args],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=90,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, str(exc)
+    ok = completed.returncode == 0
+    return ok, (completed.stdout + completed.stderr).strip()
+
+
+def set_wine_gpu_override(prefix: Path, wine: Path, env: dict[str, str], target) -> list[str]:
+    """Spoof the DXGI/wined3d GPU identity via Wine's Direct3D registry overrides.
+
+    Revo Scan's visible GPU list reads Direct3D/DXGI adapters, which the Vulkan
+    layer cannot influence. Wine honours VideoPciVendorID / VideoPciDeviceID /
+    VideoDescription overrides under HKCU\\Software\\Wine\\Direct3D.
+    """
+    steps = (
+        ("VideoPciVendorID", "REG_DWORD", str(int(target.vendor_id))),
+        ("VideoPciDeviceID", "REG_DWORD", str(int(target.device_id))),
+        ("VideoDescription", "REG_SZ", target.name),
+    )
+    report: list[str] = []
+    for value, reg_type, data in steps:
+        ok, message = _wine_reg(
+            wine, env,
+            ["add", _D3D_KEY, "/v", value, "/t", reg_type, "/d", data, "/f"],
+        )
+        report.append(f"{value}: {'ok' if ok else 'FAILED ' + message}")
+    return report
+
+
+def clear_wine_gpu_override(prefix: Path, wine: Path, env: dict[str, str]) -> list[str]:
+    report: list[str] = []
+    for value in ("VideoPciVendorID", "VideoPciDeviceID", "VideoDescription"):
+        ok, message = _wine_reg(wine, env, ["delete", _D3D_KEY, "/v", value, "/f"])
+        report.append(f"{value}: {'cleared' if ok else message or 'absent'}")
+    return report
 
 
 def sanitize_bluetooth(prefix: Path) -> list[str]:

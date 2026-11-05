@@ -3,6 +3,7 @@ import unittest
 from revoscan_launcher.gpu import (
     AMD_TARGETS,
     GpuAdapter,
+    GpuTarget,
     build_mapping_environment,
     parse_pci_id,
 )
@@ -20,9 +21,10 @@ class GpuMappingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_pci_id("not-a-pci-id")
 
-    def test_targets_are_amd_profiles_and_mapping_is_explicit(self):
+    def test_targets_are_known_profiles_and_mapping_is_explicit(self):
         self.assertTrue(AMD_TARGETS)
-        self.assertTrue(all(t.vendor_id == 0x1002 for t in AMD_TARGETS.values()))
+        self.assertTrue(all(t.vendor_id in (0x1002, 0x8086) for t in AMD_TARGETS.values()))
+        self.assertTrue(all(t.device_id != 0 for t in AMD_TARGETS.values()))
         source = GpuAdapter.from_pci("0x8086", "0x7d55", "Intel Arc Graphics")
         self.assertEqual(build_mapping_environment(source, None), {})
         target = AMD_TARGETS["rx-7700-xt"]
@@ -31,6 +33,15 @@ class GpuMappingTests(unittest.TestCase):
         self.assertEqual(env["REVOSCAN_MAP_SOURCE_DEVICE"], "7d55")
         self.assertEqual(env["REVOSCAN_MAP_TARGET_VENDOR"], "1002")
         self.assertEqual(env["REVOSCAN_MAP_TARGET_NAME"], target.name)
+
+    def test_intel_b580_target(self):
+        source = GpuAdapter.from_pci("0x8086", "0xfd80", "Intel Graphics")
+        target = AMD_TARGETS["intel-b580"]
+        env = build_mapping_environment(source, target)
+        self.assertEqual(env["REVOSCAN_MAP_TARGET_VENDOR"], "8086")
+        self.assertEqual(env["REVOSCAN_MAP_TARGET_NAME"], "Intel(R) Arc(TM) B580 Graphics")
+        with self.assertRaises(ValueError):
+            build_mapping_environment(source, GpuTarget("fake", "Fake GPU", 0x10DE, 0x1234))
 
     def test_mapping_rejects_unknown_source_vendors(self):
         source = GpuAdapter.from_pci("0x10de", "0x2684", "NVIDIA")

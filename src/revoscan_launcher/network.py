@@ -165,3 +165,42 @@ def device_gateway(device: str, runner=_run) -> str | None:
         if value:
             return value
     return None
+
+
+def _firewall_rich_rule(address: str) -> str:
+    return f'rule family="ipv4" source address="{address}/32" accept'
+
+
+def firewalld_state(runner=_run) -> str | None:
+    out = runner(["firewall-cmd", "--state"], timeout=10)
+    return out.strip() or None
+
+
+def firewall_allows(address: str, runner=_run) -> bool:
+    out = runner(["firewall-cmd", "--query-rich-rule=" + _firewall_rich_rule(address)], timeout=15)
+    return "yes" in out.lower()
+
+
+def ensure_firewall_allows(address: str, runner=_run) -> tuple[bool, str]:
+    """Make firewalld accept traffic from `address`.
+
+    Device discovery UDP from scanner APs is otherwise silently dropped by a
+    default-zone firewalld even though the app's sockets are bound. Tries a
+    passwordless sudo first; returns (applied, message) where message carries
+    the exact command to run when elevation was not possible.
+    """
+    rule = _firewall_rich_rule(address)
+    import shutil
+
+    if shutil.which("firewall-cmd") is None:
+        return True, "firewalld not installed; nothing to allow."
+    if firewalld_state(runner) != "running":
+        return True, "firewalld not active; nothing to allow."
+    if firewall_allows(address, runner):
+        return True, "firewalld already allows this address."
+    for prefix_args in (["sudo", "-n"], []):
+        out = runner(prefix_args + ["firewall-cmd", "--add-rich-rule=" + rule], timeout=30)
+        if "success" in out.lower():
+            runner(prefix_args + ["firewall-cmd", "--permanent", "--add-rich-rule=" + rule], timeout=30)
+            return True, f"firewalld now allows {address} (rule persisted)."
+    return False, f"Elevation required — run: sudo firewall-cmd --add-rich-rule='{rule}' && sudo firewall-cmd --permanent --add-rich-rule='{rule}'"

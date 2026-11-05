@@ -36,7 +36,8 @@ int parse_gpu_map(const char *source_vendor,
         !parse_hex_id(source_device, &source_device_id) ||
         !parse_hex_id(target_vendor, &target_vendor_id)) return 0;
     if (source_vendor_id != 0x1002u && source_vendor_id != 0x8086u) return 0;
-    if (target_vendor_id != REVOSCAN_GPU_TARGET_VENDOR_AMD) return 0;
+    if (target_vendor_id != REVOSCAN_GPU_TARGET_VENDOR_AMD &&
+        target_vendor_id != REVOSCAN_GPU_TARGET_VENDOR_INTEL) return 0;
     if (!target_name || !target_name[0]) return 0;
 
     size_t name_length = strlen(target_name);

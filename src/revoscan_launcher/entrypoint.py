@@ -70,7 +70,7 @@ def check_vulkan_identity(output: TextIO) -> int:
     if source is None:
         print("No AMD or Intel adapter detected; nothing to map.", file=output)
         return 0
-    target = AMD_TARGETS["rx-7700-xt"]
+    target = AMD_TARGETS["intel-b580"]
     mapping_env = build_mapping_environment(source, target)
     mapping_env["VK_INSTANCE_LAYERS"] = "VK_LAYER_REVOSCAN_LINUX_GPU_MAP"
     appdir = os.environ.get("APPDIR")
