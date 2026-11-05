@@ -4,7 +4,12 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 APPDIR="$ROOT/build/AppDir"
 VENV="$ROOT/build/python-builder"
 APPIMAGE_TOOL="$ROOT/tools/cache/appimagetool-x86_64.AppImage"
-OUT="$ROOT/dist/RevoScan-Linux-Launcher-0.1.2-x86_64.AppImage"
+VERSION="${REVOSCAN_VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/pyproject.toml")}"
+if [[ -z "$VERSION" ]]; then
+    printf 'Could not read the project version from pyproject.toml.\n' >&2
+    exit 2
+fi
+OUT="$ROOT/dist/RevoScan-Linux-Launcher-${VERSION}-x86_64.AppImage"
 
 if [[ ! -d /opt/wine-staging ]]; then
     printf 'This builder requires WineHQ Staging staged at /opt/wine-staging.\n' >&2

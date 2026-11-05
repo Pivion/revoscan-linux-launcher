@@ -15,6 +15,7 @@ Build a public, reproducible x86_64 AppImage that starts a launcher GUI first, l
 - Use standard-library Python for launcher logic when practical. Keep UI code thin and dependency-injected so installer, mapping, and command construction can be tested without a display.
 - Do not enable GPU spoofing by default. Keep an unmodified path, explicit per-adapter selection, validation, and a reversible configuration. Show the physical adapter and the reported target separately.
 - Intel-to-AMD mappings are experimental until exercised on physical Intel Vulkan hardware. Never equate passing Revo Scan's filter with actual compute compatibility.
+- Never set `VK_LAYER_PATH` to a directory that lacks both the layer manifest and its shared object: the Vulkan loader then searches only that path and silently drops the layer. Gate it on `runtime.mapping_layer_dir()`.
 - Build the public AppImage on the oldest pinned target distribution, avoid newer-than-target GLIBC/libstdc++ symbols, use host GPU drivers, and test actual startup on each advertised distro. Container-only success is not full desktop/GPU validation.
 - Keep AppImage/PyInstaller `LD_LIBRARY_PATH` out of host desktop openers and Wine child processes. `AppRun` must preserve the host's original library path separately; `runtime.py` should add only Wine/Vulkan-layer directories plus that host path so frozen Python libraries cannot shadow newer distro libraries.
 - Do not package Fedora-specific Wine binaries and call the result universal without a baseline ABI test.

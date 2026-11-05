@@ -1,51 +1,71 @@
-# RevoScan Linux Launcher
+# Revo Scan on Linux
 
-An unofficial, community-built AppImage launcher for running Revopoint's Windows Revo Scan 6 on Linux through Wine. It is not affiliated with or supported by Revopoint.
+An unofficial launcher that runs Revopoint's Windows **Revo Scan 6** on Linux. Wine is built in, so you don't need to install or configure it.
 
-## Public-release boundary
+Not affiliated with, endorsed by, or supported by Revopoint.
 
-A published AppImage may contain the launcher, Wine, this project's open-source Vulkan compatibility layer, and their license notices. **It must never contain Revopoint's installer or application binaries, a Wine prefix with Revo Scan installed, activation/account data, scan projects, serial numbers, or logs.** The user must select a Windows installer or explicitly download one from Revopoint's official support page, then accept the vendor's terms themselves. The official pages currently expose Windows x86_64 downloads; this project is an unofficial Wine wrapper, not a native Linux port.[1][2]
+## What it does for you
 
-The public release must be reproducible from tracked source. Machine-specific proof builds and vendor installers are kept only under ignored `local/` paths. Check `.gitignore` before adding build artifacts.
+- Installs and starts Revo Scan from one window — Wine included.
+- Finds the current Windows installer on Revopoint's site and downloads it after you confirm, or uses an installer you already have.
+- Adds the firewall rule that lets Revo Scan see your scanner, with a button instead of a terminal command.
+- Optionally reports your graphics card to Revo Scan as a supported AMD card, if Revo Scan refuses to use the real one.
 
-## Intended first-run flow
+## Before you start
 
-1. Start the launcher GUI; do not start Revo Scan directly.
-2. Choose a local `RevoScan6-*-windows-x86_64.exe`, or ask the launcher to discover and download the current Windows installer link from the official Revopoint support page. Show the advertised version, final URL, size/progress, and confirmation before downloading. Reject non-HTTPS or non-Revopoint download hosts. TLS uses the bundled certifi root bundle; certificate verification is never disabled.
-3. Create a writable per-user Wine prefix, run the installer interactively, and leave all EULA/activation decisions to the user.
-4. Detect Vulkan-capable AMD and Intel adapters. GPU identity mapping is **off by default** and requires explicit selection and a warning acknowledgement. The initial targets are Revopoint's published GPU compatibility-test identities (RX 7700 XT, RX 9070 XT, RX 6750 GRE); the shim changes reported identity only and does not add hardware capability.[2]
-5. Launch the installed Revo Scan through the managed Wine runtime with the selected mapping. Keep the original Wine prefix and user projects untouched.
+- A 64-bit Linux desktop with working Vulkan graphics drivers.
+- NetworkManager for Wi-Fi, and firewalld if you want the firewall button to work.
+- Around 1 GB of free space for the launcher, Wine and Revo Scan.
 
-## GPU mapping safety
+## Using it
 
-The mapper is an experimental compatibility workaround, not an upgrade, benchmark, or guarantee of acceleration. It must report actual adapter vendor/device/driver separately from the selected reported AMD target. No target is presumed compatible just because the allowlist accepts its name. Intel-to-AMD mapping is not validated until tested on physical Intel hardware. Provide a no-spoof option and a clear reset path.
+1. **Start the launcher.** Everything happens from this window.
+2. **Get the installer.** Pick a `RevoScan6-…-windows-x86_64.exe` you already have, or press *Download latest from Revopoint*. It shows the version and URL and asks before downloading. You accept Revopoint's licence yourself.
+3. **Install.** Press *Install Revo Scan* and complete the setup window that opens.
+4. **Connect the scanner.** Power the scanner on in Wi-Fi AP mode, connect your spare Wi-Fi adapter to its network in your desktop's network settings, then press *Allow scanner*. *Check status* shows whether the firewall is still blocking it.
+5. **Scan.** Press *Launch Revo Scan*.
 
-## Cross-distro target
+Your Revo Scan installation and settings live in `~/.local/share/revoscan-linux-launcher`. *Open data folder* takes you there.
 
-Target families are Ubuntu, Debian, Fedora, openSUSE, and Arch Linux (x86_64). A release is **not** cross-distro supported until its AppImage has been tested on pinned versions from each family. AppImage guidance recommends building on the oldest target base, bundling non-baseline dependencies, and testing on the intended systems; merely producing an AppImage does not establish portability.[3][4][5]
+## If Revo Scan says your GPU is unsupported
 
-The existing local Revo Scan 6.4.1 proof AppImage was built on this Fedora-derived machine and contains proprietary software. It is a private legacy artifact only; it is not the project release and must never be uploaded or committed.
+Open section 3, tick **Report GPU as**, choose the AMD card from the list, press **Test** to see what Revo Scan will be told, then launch.
+
+This changes only what the app is told about your GPU. It does not add memory, speed or features, and it can cause instability.
+
+## If something goes wrong
+
+| Problem | What to try |
+| --- | --- |
+| Scanner isn't found | Make sure the spare Wi-Fi adapter is connected to the scanner's network, then press *Check status* → *Allow scanner*. |
+| *Allow scanner* asks for a password | Adding a firewall rule needs admin rights — that prompt is normal. |
+| *Download latest* fails | Press *Revopoint download page* and download the installer in your browser, then choose it with *Choose installer*. |
+| Windows installer won't start | Make sure the file is the `windows-x86_64` build from Revopoint, not a macOS or ARM build. |
+
+Known limits:
+
+- Bluetooth scanner discovery does not work, because Wine doesn't implement the Windows Bluetooth APIs Revo Scan uses. Wi-Fi and USB connections are unaffected.
+- This is a preview build. Scan quality and distro support are still being tested.
+
+## What isn't included
+
+The launcher, its AppImage and this repository contain **no Revopoint software**: no installer, no installed Revo Scan files, no activation data, no scan projects, no serial numbers and no logs. You supply the installer and accept Revopoint's terms yourself.
+
+## Status
+
+Latest build: **0.1.3** (preview) — `RevoScan-Linux-Launcher-0.1.3-x86_64.AppImage`, 411,826,680 bytes.
+
+```
+SHA-256  37e10be9483e0bd3c3b594cabcc21844e037e7a753e7efbbbfc8a1a51d3b6b38
+```
+
+Built on Ubuntu 22.04 (glibc 2.35) with Wine 11.0 Staging and the Vulkan mapping layer; contains no Revopoint software. Passed the public-payload audit, a containerised GUI smoke test, and `--check-wine` / `--vulkan-check` on a Fedora 44 host (Intel GPU, mapping applied). Other distros are still untested — see [PROGRESS.md](PROGRESS.md).
 
 ## Development
 
 ```bash
 python -m unittest discover -s tests -v
+bash tests/run-c-tests.sh
 ```
 
-See [AGENTS.md](AGENTS.md), [PROGRESS.md](PROGRESS.md), and `docs/` before changing packaging, installer download, or GPU mapping behavior.
-
-## Status
-
-A public-clean x86_64 preview AppImage is built at `dist/RevoScan-Linux-Launcher-0.1.2-x86_64.AppImage` (about 412 MB). It starts the launcher first and contains Wine 11.0 Staging, the launcher, bundled certifi roots, the opt-in Vulkan layer, and notices—but no Revo Scan software or installer. The official download resolver returns the currently advertised 6.4.1.1088 link; the installer itself was not downloaded.[1]
-
-0.1.2 fixes the Revo Scan startup crash on hosts with a Bluetooth radio (Pop!_OS): Wine's `winebth` driver is stripped from the bundled runtime and prefixes are sanitized, because Revo Scan's `simpleble.dll` calls WinRT Bluetooth APIs that Wine still stubs with `E_NOTIMPL`. Consequence: Bluetooth/BLE scanner discovery is unavailable in this build (WLAN-connected scanners are unaffected).
-
-The run-installer button refreshes after selecting a valid local installer or after a successful download. The packaged `--check-latest-installer` diagnostic verifies bundled CA roots; `--check-wine` checks the bundled Wine executable without touching the user's prefix. AppRun now preserves the host library path separately, so Wine and desktop openers do not inherit PyInstaller's temporary libraries. The Ubuntu 22.04 Xvfb smoke and public-payload audit pass; Python and C tests pass. Debian 12 had a partial launcher/Wine prefix smoke. Fedora 44, openSUSE, and Arch still need target testing; this is not yet a verified “works on any distro” release and has not been uploaded.
-
-## Sources
-
-[1] https://revopoint3d.com/pages/support-download — Revopoint Support Download
-[2] https://revopoint3d.com/pages/revo-scan-6 — Revo Scan 6
-[3] https://docs.appimage.org/introduction/concepts.html — AppImage Concepts
-[4] https://docs.appimage.org/reference/best-practices.html — AppImage Best Practices
-[5] https://docs.appimage.org/packaging-guide/testing.html — AppImage Testing
+Build, packaging and release rules are in [AGENTS.md](AGENTS.md), status and evidence in [PROGRESS.md](PROGRESS.md), and packaging notes in `packaging/README.md` and `docs/`.

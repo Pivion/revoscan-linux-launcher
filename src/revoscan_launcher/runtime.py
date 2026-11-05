@@ -9,6 +9,23 @@ import subprocess
 from .gpu import GpuAdapter, GpuTarget, build_mapping_environment
 
 LAYER_NAME = "VK_LAYER_REVOSCAN_LINUX_GPU_MAP"
+LAYER_LIBRARY = "librevoscan_gpu_map.so"
+
+
+def mapping_layer_dir(appdir: Path) -> Path | None:
+    """Directory holding a usable layer manifest + shared object, else None.
+
+    A VK_LAYER_PATH pointing at a directory without the layer makes the Vulkan
+    loader search only that path, so mapping silently never applies. Callers
+    must check this before claiming a mapping is active.
+    """
+    layer_dir = Path(appdir) / "usr/share/vulkan/explicit_layer.d"
+    manifest = layer_dir / f"{LAYER_NAME}.json"
+    library = layer_dir / LAYER_LIBRARY
+    if manifest.is_file() and library.is_file():
+        return layer_dir
+    return None
+
 
 
 def build_revoscan_environment(
@@ -42,7 +59,11 @@ def build_revoscan_environment(
     host_library_path = env.pop("REVOSCAN_HOST_LD_LIBRARY_PATH", None)
     if host_library_path is None:
         host_library_path = env.get("LD_LIBRARY_PATH", "")
-    library_paths = [str(layer_dir), str(wine_lib / "x86_64-unix"), str(wine_lib.parent)]
+    library_paths = []
+    if layer_dir.is_dir():
+        library_paths.append(str(layer_dir))
+    library_paths += [str(wine_lib / "x86_64-unix"), str(wine_lib.parent)]
+
     if host_library_path:
         library_paths.append(host_library_path)
     env["LD_LIBRARY_PATH"] = ":".join(library_paths)
@@ -52,10 +73,13 @@ def build_revoscan_environment(
         if key.startswith("REVOSCAN_MAP_"):
             env.pop(key, None)
     active_layers = [item for item in env.get("VK_INSTANCE_LAYERS", "").split(":") if item and item != LAYER_NAME]
-    if adapter is not None and target is not None:
+    usable_layer_dir = (
+        mapping_layer_dir(appdir) if (adapter is not None and target is not None) else None
+    )
+    if usable_layer_dir is not None and adapter is not None and target is not None:
         env.update(build_mapping_environment(adapter, target))
         active_layers.append(LAYER_NAME)
-        env["VK_LAYER_PATH"] = str(layer_dir)
+        env["VK_LAYER_PATH"] = str(usable_layer_dir)
     elif env.get("VK_LAYER_PATH") == str(layer_dir):
         env.pop("VK_LAYER_PATH", None)
     if active_layers:
@@ -90,30 +114,38 @@ def _wine_reg(wine: Path, env: dict[str, str], args: list[str]) -> tuple[bool, s
 
 
 def set_wine_gpu_override(prefix: Path, wine: Path, env: dict[str, str], target) -> list[str]:
-    """Spoof the DXGI/wined3d GPU identity via Wine's Direct3D registry overrides.
+    """Make Wine's DXGI/wined3d report the mapped adapter.
 
-    Revo Scan's visible GPU list reads Direct3D/DXGI adapters, which the Vulkan
-    layer cannot influence. Wine honours VideoPciVendorID / VideoPciDeviceID /
-    VideoDescription overrides under HKCU\\Software\\Wine\\Direct3D.
+    Revo Scan's GPU check (RvGPUUtils::getDiscreteGpuInfo, "Vulkan
+    EnumerateVulkanDevices") actually enumerates DXGI adapters. Wine's default
+    GL-backed wined3d synthesises its own identity ("Intel(R) HD Graphics
+    4000", PCI 8086:0162, 1.5 GiB) and ignores the VideoPci* registry values,
+    so the layer cannot influence it. Selecting wined3d's Vulkan renderer makes
+    DXGI read the Vulkan physical-device properties instead — the values the
+    mapping layer already rewrites.
     """
-    steps = (
-        ("VideoPciVendorID", "REG_DWORD", str(int(target.vendor_id))),
-        ("VideoPciDeviceID", "REG_DWORD", str(int(target.device_id))),
-        ("VideoDescription", "REG_SZ", target.name),
-    )
     report: list[str] = []
-    for value, reg_type, data in steps:
-        ok, message = _wine_reg(
-            wine, env,
-            ["add", _D3D_KEY, "/v", value, "/t", reg_type, "/d", data, "/f"],
-        )
-        report.append(f"{value}: {'ok' if ok else 'FAILED ' + message}")
+    ok, message = _wine_reg(
+        wine, env,
+        ["add", _D3D_KEY, "/v", "renderer", "/t", "REG_SZ", "/d", "vulkan", "/f"],
+    )
+    report.append(f"renderer=vulkan: {'ok' if ok else 'FAILED ' + message}")
+    if not ok:
+        return report
+    # Confirm the identity DXGI will report, from inside the prefix.
+    ok, message = _wine_reg(
+        wine, env,
+        ["query", _D3D_KEY, "/v", "renderer"],
+    )
+    report.append(f"renderer: {message.splitlines()[-1].strip() if message else 'unknown'}")
     return report
 
 
 def clear_wine_gpu_override(prefix: Path, wine: Path, env: dict[str, str]) -> list[str]:
     report: list[str] = []
-    for value in ("VideoPciVendorID", "VideoPciDeviceID", "VideoDescription"):
+    # Drop the Vulkan-renderer selection plus any legacy identity values that a
+    # previous launcher version wrote and this Wine build ignores.
+    for value in ("renderer", "VideoPciVendorID", "VideoPciDeviceID", "VideoDescription"):
         ok, message = _wine_reg(wine, env, ["delete", _D3D_KEY, "/v", value, "/f"])
         report.append(f"{value}: {'cleared' if ok else message or 'absent'}")
     return report

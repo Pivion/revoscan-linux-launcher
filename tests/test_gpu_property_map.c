@@ -40,6 +40,13 @@ int main(void) {
     assert(other.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU);
     assert(strcmp(other.deviceName, "Radeon 780M") == 0);
 
+    GpuMap with_device = mapping;
+    with_device.target_device_id = 0x7480;
+    VkPhysicalDeviceProperties spoofed = sample(
+        0x8086, 0x7d55, VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, "Intel Arc Graphics");
+    assert(apply_gpu_map(&spoofed, &with_device) == 1);
+    assert(spoofed.vendorID == 0x1002 && spoofed.deviceID == 0x7480);
+
     mapping.enabled = 0;
     intel = sample(0x8086, 0x7d55, VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, "Intel Arc Graphics");
     assert(apply_gpu_map(&intel, &mapping) == 0);
@@ -48,13 +55,17 @@ int main(void) {
     assert(strcmp(intel.deviceName, "Intel Arc Graphics") == 0);
 
     GpuMap parsed = {0};
-    assert(parse_gpu_map("8086", "7d55", "1002", "AMD Radeon RX 7700 XT", &parsed) == 1);
+    assert(parse_gpu_map("8086", "7d55", "1002", "AMD Radeon RX 7700 XT", "", &parsed) == 1);
     assert(parsed.enabled == 1 && parsed.source_vendor_id == 0x8086);
     assert(parsed.source_device_id == 0x7d55 && parsed.target_vendor_id == 0x1002);
+    assert(parsed.target_device_id == 0);
     assert(strcmp(parsed.target_name, "AMD Radeon RX 7700 XT") == 0);
-    assert(parse_gpu_map("10de", "2684", "1002", "AMD Radeon RX 7700 XT", &parsed) == 0);
-    assert(parse_gpu_map("8086", "oops", "1002", "AMD Radeon RX 7700 XT", &parsed) == 0);
-    assert(parse_gpu_map("8086", "7d55", "10de", "NVIDIA", &parsed) == 0);
-    assert(parse_gpu_map("8086", "7d55", "1002", "", &parsed) == 0);
+    assert(parse_gpu_map("8086", "7d55", "1002", "AMD Radeon RX 7700 XT", "7480", &parsed) == 1);
+    assert(parsed.target_device_id == 0x7480);
+    assert(parse_gpu_map("10de", "2684", "1002", "AMD Radeon RX 7700 XT", "7480", &parsed) == 0);
+    assert(parse_gpu_map("8086", "oops", "1002", "AMD Radeon RX 7700 XT", "7480", &parsed) == 0);
+    assert(parse_gpu_map("8086", "7d55", "10de", "NVIDIA", "2684", &parsed) == 0);
+    assert(parse_gpu_map("8086", "7d55", "1002", "", "7480", &parsed) == 0);
+    assert(parse_gpu_map("8086", "7d55", "1002", "AMD Radeon RX 7700 XT", "oops", &parsed) == 0);
     return 0;
 }

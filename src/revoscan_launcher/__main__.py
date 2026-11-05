@@ -1,4 +1,4 @@
-from .gui import main
+from .entrypoint import run
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run())

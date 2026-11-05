@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import io
 import shutil
 import subprocess
 import threading
@@ -18,21 +19,16 @@ from .installer import (
     fetch_latest_official_installer,
 )
 from .network import (
-    WifiDevice,
-    WifiNetwork,
-    connect_network,
-    default_route_device,
-    device_gateway,
     ensure_firewall_allows,
-    scanner_candidates,
-    scan_networks,
-    scanner_reachable,
-    wifi_devices,
+    firewall_report,
+    parse_subnets,
+    scanner_subnets,
 )
 from .runtime import (
     build_revoscan_environment,
     clear_wine_gpu_override,
     installed_executable,
+    mapping_layer_dir,
     sanitize_bluetooth,
     set_wine_gpu_override,
 )
@@ -56,9 +52,9 @@ def desktop_opener_environment(base_env: dict[str, str] | None = None) -> dict[s
 class Launcher:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("Revo Scan for Linux — unofficial launcher")
-        self.root.geometry("780x760")
-        self.root.minsize(700, 700)
+        self.root.title("Revo Scan on Linux")
+        self.root.geometry("780x720")
+        self.root.minsize(700, 660)
         self.root.option_add("*Font", "Sans 10")
 
         self.appdir = Path(os.environ["APPDIR"]) if os.environ.get("APPDIR") else None
@@ -71,12 +67,14 @@ class Launcher:
         self.adapter_items: list[GpuAdapter] = []
         self.mapping_enabled = tk.BooleanVar(value=False)
         self.target_key = tk.StringVar(value="intel-b580")
-        self.status = tk.StringVar(value="Choose a Revo Scan Windows installer to begin.")
+        self.status = tk.StringVar(value="Choose the Revo Scan installer to begin.")
         self._busy = False
 
         self._build_ui()
         self.refresh_adapters()
-        self.refresh_wifi_devices()
+        # The firewall probe runs only when the user asks for it: firewalld
+        # queries go through polkit and can prompt for a password, which must
+        # never happen as a side effect of opening the launcher.
         self._refresh_install_state()
 
     def _build_ui(self) -> None:
@@ -86,41 +84,75 @@ class Launcher:
         ttk.Label(outer, text="Revo Scan 6 on Linux", font=("Sans", 18, "bold")).pack(anchor="w")
         ttk.Label(
             outer,
-            text="Unofficial Wine launcher. Revopoint does not provide Linux support for this build.",
+            text="Unofficial launcher — not supported by Revopoint.",
             foreground="#9a4b00",
             wraplength=720,
         ).pack(anchor="w", pady=(3, 14))
 
-        installer_box = ttk.LabelFrame(outer, text="1 · Windows installer", padding=12)
+        installer_box = ttk.LabelFrame(outer, text="1 · Installer", padding=12)
         installer_box.pack(fill="x", pady=(0, 12))
         row = ttk.Frame(installer_box)
         row.pack(fill="x")
         ttk.Entry(row, textvariable=self.installer_path).pack(side="left", fill="x", expand=True)
-        ttk.Button(row, text="Choose .exe…", command=self.choose_installer).pack(side="left", padx=(8, 0))
+        ttk.Button(row, text="Choose installer…", command=self.choose_installer).pack(side="left", padx=(8, 0))
         buttons = ttk.Frame(installer_box)
         buttons.pack(fill="x", pady=(8, 0))
-        ttk.Button(buttons, text="Find / download latest official installer", command=self.find_latest).pack(side="left")
-        ttk.Button(buttons, text="Open Revopoint download page", command=lambda: webbrowser.open(SUPPORT_PAGE)).pack(side="left", padx=8)
+        ttk.Button(buttons, text="Download latest from Revopoint", command=self.find_latest).pack(side="left")
+        ttk.Button(buttons, text="Revopoint download page", command=lambda: webbrowser.open(SUPPORT_PAGE)).pack(side="left", padx=8)
         ttk.Label(
             installer_box,
-            text="Downloads require your confirmation and come from Revopoint's HTTPS CDN. You accept the installer terms yourself.",
+            text="Downloads come from Revopoint and ask for your confirmation. You accept their terms.",
             wraplength=700,
         ).pack(anchor="w", pady=(8, 0))
 
-        gpu_box = ttk.LabelFrame(outer, text="3 · Optional GPU identity mapping (experimental)", padding=12)
+        scan_box = ttk.LabelFrame(outer, text="2 · Scanner", padding=12)
+        scan_box.pack(fill="x", pady=(0, 12))
+        ttk.Label(
+            scan_box,
+            text=(
+                "Connect your spare Wi-Fi adapter to the scanner's access point in your desktop's "
+                "network settings, then allow it through the firewall."
+            ),
+            wraplength=700,
+        ).pack(anchor="w")
+        firewall_row = ttk.Frame(scan_box)
+        firewall_row.pack(fill="x", pady=(8, 0))
+        ttk.Label(firewall_row, text="Scanner network:").pack(side="left")
+        self.scanner_subnet = tk.StringVar()
+        ttk.Entry(firewall_row, textvariable=self.scanner_subnet, width=24).pack(side="left", padx=8)
+        self.firewall_button = ttk.Button(
+            firewall_row, text="Allow scanner", command=self.allow_firewall
+        )
+        self.firewall_button.pack(side="left")
+        ttk.Button(
+            firewall_row, text="Check status", command=self.refresh_firewall_status
+        ).pack(side="left", padx=8)
+        self.firewall_status = tk.StringVar(
+            value=(
+                "Click Check status to see whether the firewall lets the scanner through."
+            )
+        )
+        ttk.Label(scan_box, textvariable=self.firewall_status, wraplength=700).pack(
+            anchor="w", pady=(8, 0)
+        )
+
+        gpu_box = ttk.LabelFrame(outer, text="3 · GPU (optional, experimental)", padding=12)
         gpu_box.pack(fill="x", pady=(0, 12))
         adapter_row = ttk.Frame(gpu_box)
         adapter_row.pack(fill="x")
-        ttk.Label(adapter_row, text="Detected adapter:").pack(side="left")
+        ttk.Label(adapter_row, text="Detected GPU:").pack(side="left")
         self.adapter_combo = ttk.Combobox(adapter_row, state="readonly", width=56)
         self.adapter_combo.pack(side="left", fill="x", expand=True, padx=8)
         self.adapter_combo.bind("<<ComboboxSelected>>", lambda _event: self._update_mapping_controls())
         ttk.Button(adapter_row, text="Refresh", command=self.refresh_adapters).pack(side="left")
+        ttk.Button(adapter_row, text="Test", command=self.verify_mapping).pack(
+            side="left", padx=(8, 0)
+        )
         target_row = ttk.Frame(gpu_box)
         target_row.pack(fill="x", pady=(8, 0))
         ttk.Checkbutton(
             target_row,
-            text="Enable mapping (off by default)",
+            text="Report GPU as:",
             variable=self.mapping_enabled,
             command=self._update_mapping_controls,
         ).pack(side="left")
@@ -138,45 +170,29 @@ class Launcher:
         ttk.Label(
             gpu_box,
             text=(
-                "Mapping changes the reported Vulkan and DirectX identities; it adds no GPU features. "
-                "Targets: AMD RX profiles and Intel Arc B580. Do not enable unless you accept "
-                "possible instability and unsupported behavior."
+                "Changes what Revo Scan sees, not what your GPU can do. "
+                "Use it only if Revo Scan won't use your GPU."
             ),
             foreground="#9a4b00",
             wraplength=700,
         ).pack(anchor="w", pady=(8, 0))
+        self.mapping_status = tk.StringVar(value="")
+        ttk.Label(gpu_box, textvariable=self.mapping_status, foreground="#555555", wraplength=700).pack(
+            anchor="w", pady=(6, 0)
+        )
 
-        gpu_box = ttk.LabelFrame(outer, text="2 · Scanner Wi-Fi", padding=12)
-        gpu_box.pack(fill="x", pady=(0, 12))
-        device_row = ttk.Frame(gpu_box)
-        device_row.pack(fill="x")
-        ttk.Label(device_row, text="Wi-Fi adapter:").pack(side="left")
-        self.device_combo = ttk.Combobox(device_row, state="readonly", width=44)
-        self.device_combo.pack(side="left", fill="x", expand=True, padx=8)
-        ttk.Button(device_row, text="Refresh", command=self.refresh_wifi_devices).pack(side="left")
-        wifi_row = ttk.Frame(gpu_box)
-        wifi_row.pack(fill="x", pady=(8, 0))
-        ttk.Button(wifi_row, text="Scan for scanner network", command=self.scan_for_scanner).pack(side="left")
-        self.network_combo = ttk.Combobox(wifi_row, state="disabled", width=34)
-        self.network_combo.pack(side="left", padx=8)
-        self.connect_button = ttk.Button(wifi_row, text="Connect", command=self.connect_scanner, state="disabled")
-        self.connect_button.pack(side="left")
-        self.wifi_status = tk.StringVar(value="Scan to find the scanner's access point (SSID like POP4-REVO-…).")
-        ttk.Label(gpu_box, textvariable=self.wifi_status, wraplength=700).pack(anchor="w", pady=(8, 0))
-        self.scanner_networks: list[WifiNetwork] = []
-
-        run_box = ttk.LabelFrame(outer, text="4 · Install or launch", padding=12)
+        run_box = ttk.LabelFrame(outer, text="4 · Revo Scan", padding=12)
         run_box.pack(fill="x", pady=(0, 12))
         run_row = ttk.Frame(run_box)
         run_row.pack(fill="x")
-        self.install_button = ttk.Button(run_row, text="Run installer in Wine", command=self.run_installer)
+        self.install_button = ttk.Button(run_row, text="Install Revo Scan", command=self.run_installer)
         self.install_button.pack(side="left")
         self.launch_button = ttk.Button(run_row, text="Launch Revo Scan", command=self.launch_revoscan)
         self.launch_button.pack(side="left", padx=8)
-        ttk.Button(run_row, text="Open Wine prefix folder", command=self.open_prefix).pack(side="left")
+        ttk.Button(run_row, text="Open data folder", command=self.open_prefix).pack(side="left")
         ttk.Label(
             run_box,
-            text=f"Managed prefix: {self.prefix}",
+            text=f"Data folder: {self.prefix}",
             wraplength=700,
         ).pack(anchor="w", pady=(8, 0))
 
@@ -184,7 +200,7 @@ class Launcher:
         ttk.Label(outer, textvariable=self.status, wraplength=720).pack(anchor="w")
         ttk.Label(
             outer,
-            text="This public launcher does not include Revopoint software. It uses the host Vulkan driver; full scan/export and distro coverage must be tested.",
+            text="Revopoint software is not bundled. Scan quality and Linux support are still being tested.",
             foreground="#555555",
             wraplength=720,
         ).pack(anchor="w", pady=(10, 0))
@@ -228,10 +244,10 @@ class Launcher:
         if labels:
             if self.adapter_combo.current() < 0:
                 self.adapter_combo.current(0)
-            self.status.set(f"Found {len(labels)} DRM adapter(s). Mapping remains disabled unless you enable it.")
+            self.status.set(f"Found {len(labels)} GPU(s).")
         else:
             self.adapter_combo.set("No AMD/Intel/NVIDIA DRM adapter found")
-            self.status.set("No DRM adapters found. Install/verify the host graphics driver and refresh.")
+            self.status.set("No GPU found. Check your graphics driver, then refresh.")
         self._update_mapping_controls()
 
     def _update_mapping_controls(self) -> None:
@@ -242,128 +258,105 @@ class Launcher:
         self.target_combo.configure(state="readonly" if enabled else "disabled")
         if self.mapping_enabled.get() and not supported:
             self.status.set(
-                "Mapping supports AMD or Intel source adapters; choose one or leave mapping disabled. "
-                "Verified working under Wine: Revo Scan's Vulkan enumeration reports the mapped AMD identity."
+                "GPU mapping works with AMD and Intel GPUs."
             )
+        self._update_mapping_status()
 
-    def refresh_wifi_devices(self) -> None:
+    def _update_mapping_status(self) -> None:
+        if not self.mapping_enabled.get():
+            self.mapping_status.set("")
+            return
+        layer_dir = mapping_layer_dir(self._appdir_for_runtime())
+        if layer_dir is None:
+            self.mapping_status.set(
+                "GPU mapping isn't available in this build. Revo Scan will start without it."
+            )
+        else:
+            self.mapping_status.set("Ready.")
+
+    def verify_mapping(self) -> None:
+        adapter, target = self._selected_gpu()
+        if target is None or adapter is None:
+            self.mapping_status.set("Turn on GPU mapping and pick a target first.")
+            return
+        self.mapping_status.set("Testing…")
+        threading.Thread(
+            target=self._verify_mapping_worker, args=(adapter, target), daemon=True
+        ).start()
+
+    def _verify_mapping_worker(self, adapter: GpuAdapter, target: GpuTarget) -> None:
+        from .entrypoint import check_vulkan_identity
+
+        buffer = io.StringIO()
         try:
-            self.wifi_devices: list[WifiDevice] = wifi_devices()
+            check_vulkan_identity(buffer, source=adapter, target=target)
+            text = buffer.getvalue().strip()
+        except Exception as exc:  # pragma: no cover - defensive
+            text = f"Mapping check failed: {exc}"
+        self.root.after(0, lambda: self.mapping_status.set(text[-700:] or "No output."))
+
+    def _detected_scanner_subnets(self) -> list[str]:
+        try:
+            return [link.cidr for link in scanner_subnets()]
         except (OSError, subprocess.SubprocessError):
-            self.wifi_devices = []
-        labels = [
-            f"{d.device} · {d.state} · {d.connection or 'not connected'}" for d in self.wifi_devices
-        ]
-        self.device_combo["values"] = labels
-        if labels:
-            self.device_combo.current(0)
-        else:
-            self.device_combo.set("No Wi-Fi adapter found (NetworkManager required)")
-            self.wifi_status.set("NetworkManager is required for scanner Wi-Fi management.")
+            return []
 
-    def _selected_wifi_device(self) -> str | None:
-        index = self.device_combo.current()
-        if 0 <= index < len(getattr(self, "wifi_devices", [])):
-            return self.wifi_devices[index].device
-        return None
+    def refresh_firewall_status(self) -> None:
+        threading.Thread(target=self._firewall_status_worker, daemon=True).start()
 
-    def scan_for_scanner(self) -> None:
-        device = self._selected_wifi_device()
-        if not device:
-            self.wifi_status.set("Select a Wi-Fi adapter first.")
-            return
-        self.wifi_status.set(f"Scanning Wi-Fi networks on {device}…")
-        threading.Thread(target=self._wifi_scan_worker, args=(device,), daemon=True).start()
-
-    def _wifi_scan_worker(self, device: str) -> None:
+    def _firewall_status_worker(self) -> None:
+        subnets = self._detected_scanner_subnets()
         try:
-            networks = scan_networks(device)
+            report = firewall_report(subnets[:1])
         except Exception as exc:
-            self.root.after(0, lambda error=exc: self.wifi_status.set(f"Wi-Fi scan failed: {error}"))
-            return
-        self.root.after(0, lambda: self._wifi_scan_done(networks))
-
-    def _wifi_scan_done(self, networks: list[WifiNetwork]) -> None:
-        self.scanner_networks = networks
-        candidates = scanner_candidates(networks)
-        if candidates:
-            labels = [
-                f"{net.ssid} · {net.security or 'open'} · ch{net.channel} · {net.signal}%"
-                for net in candidates
-            ]
-            self.network_combo["values"] = labels
-            self.network_combo.current(0)
-            self.network_combo.configure(state="readonly")
-            self.connect_button.configure(state="normal")
-            self.wifi_status.set(
-                f"{len(candidates)} candidate scanner access point(s) found "
-                "(vendor-named first, then open networks). Pick one and connect."
+            self.root.after(
+                0, lambda error=exc: self.firewall_status.set(f"Firewall check failed: {error}")
             )
-        else:
-            self.network_combo.set("")
-            self.network_combo.configure(state="disabled")
-            self.connect_button.configure(state="disabled")
-            self.wifi_status.set(
-                "No candidate scanner access point found. Power the scanner on, enable its Wi-Fi/AP mode, then scan again."
-            )
-
-    def _selected_scanner_network(self) -> WifiNetwork | None:
-        index = self.network_combo.current()
-        candidates = scanner_candidates(self.scanner_networks)
-        if 0 <= index < len(candidates):
-            return candidates[index]
-        return None
-
-    def connect_scanner(self) -> None:
-        device = self._selected_wifi_device()
-        if not device:
-            self.wifi_status.set("Select a Wi-Fi adapter first.")
             return
-        scanner = self._selected_scanner_network()
-        if not scanner:
-            self.wifi_status.set("Scan for the scanner network first.")
-            return
-        self.connect_button.configure(state="disabled")
-        self.wifi_status.set(f"Connecting {device} to {scanner.ssid}…")
-        threading.Thread(target=self._wifi_connect_worker, args=(device, scanner), daemon=True).start()
+        self.root.after(0, lambda: self._show_firewall_report(subnets, report))
 
-    def _wifi_connect_worker(self, device: str, scanner: WifiNetwork) -> None:
+    def _show_firewall_report(self, subnets: list[str], report) -> None:
+        if not self.scanner_subnet.get() and subnets:
+            self.scanner_subnet.set(subnets[0])
+        self.firewall_status.set(report.describe())
+
+    def allow_firewall(self) -> None:
+        text = self.scanner_subnet.get().strip()
+        if not text:
+            # Cheap, password-free lookup: only `ip`, never firewalld.
+            detected = self._detected_scanner_subnets()
+            if detected:
+                self.scanner_subnet.set(detected[0])
+                text = detected[0]
         try:
-            ok = connect_network(device, scanner.ssid)
-            gateway = device_gateway(device) if ok else None
-            reachable = scanner_reachable(gateway) if gateway else False
-            route_owner = default_route_device() if ok else None
-            firewall_ok, firewall_msg = ensure_firewall_allows(gateway) if gateway else (True, "")
-        except Exception as exc:
-            self.root.after(0, lambda error=exc: self.wifi_status.set(f"Connection failed: {error}"))
+            targets = parse_subnets(text)
+        except ValueError as exc:
+            self.firewall_status.set(f"That isn't a valid address: {exc}")
             return
-        self.root.after(
-            0, lambda: self._wifi_connect_done(device, scanner, ok, gateway, reachable, route_owner, firewall_msg)
-        )
+        if not targets:
+            self.firewall_status.set(
+                "Enter the scanner's network first."
+            )
+            return
+        self.firewall_button.configure(state="disabled")
+        self.firewall_status.set("Allowing the scanner…")
+        threading.Thread(target=self._firewall_allow_worker, args=(targets,), daemon=True).start()
 
-    def _wifi_connect_done(
-        self, device: str, scanner: WifiNetwork, ok: bool, gateway: str | None, reachable: bool,
-        route_owner: str | None, firewall_msg: str = ""
-    ) -> None:
-        if not ok:
-            self.wifi_status.set(f"Could not connect {device} to {scanner.ssid}. Check the network password or adapter state.")
-            self.connect_button.configure(state="normal")
-            return
-        notes = []
-        if reachable:
-            notes.append(f"scanner reachable at {gateway}")
-        else:
-            notes.append("scanner gateway not responding yet (it may take a few seconds)")
-        if firewall_msg:
-            notes.append(firewall_msg)
-        if route_owner and route_owner != device:
-            notes.append(f"internet default route stays on {route_owner}")
-        elif route_owner == device:
-            notes.append("WARNING: the scanner connection owns the default route")
-        self.wifi_status.set(
-            f"Connected {device} to {scanner.ssid}: " + "; ".join(notes) + ". Launch Revo Scan next."
-        )
-        self.refresh_wifi_devices()
+    def _firewall_allow_worker(self, targets: list[str]) -> None:
+        messages: list[str] = []
+        for target in targets:
+            try:
+                ok, message = ensure_firewall_allows(target)
+            except Exception as exc:  # pragma: no cover - defensive
+                ok, message = False, f"{target}: {exc}"
+            messages.append(message)
+            if not ok:
+                break
+        self.root.after(0, lambda: self._firewall_allow_done(messages))
+
+    def _firewall_allow_done(self, messages: list[str]) -> None:
+        self.firewall_button.configure(state="normal")
+        self.firewall_status.set(" ".join(messages))
 
     def set_installer_path(self, path: str | Path) -> None:
         self.installer_path.set(str(path))
@@ -376,13 +369,13 @@ class Launcher:
         )
         if selected:
             self.set_installer_path(selected)
-            self.status.set("Installer selected. Click ‘Run installer in Wine’ and complete its setup manually.")
+            self.status.set("Installer selected. Click Install Revo Scan.")
 
     def find_latest(self) -> None:
         if self._busy:
             return
         self._busy = True
-        self.status.set("Checking Revopoint's official support page…")
+        self.status.set("Looking for the latest installer…")
         threading.Thread(target=self._lookup_latest_worker, daemon=True).start()
 
     def _lookup_latest_worker(self) -> None:
@@ -394,10 +387,10 @@ class Launcher:
 
     def _lookup_failed(self, exc: Exception) -> None:
         self._busy = False
-        self.status.set(f"Could not resolve an official direct download: {exc}")
+        self.status.set(f"Couldn't find a download link: {exc}")
         if messagebox.askyesno(
             "Manual download",
-            "No trusted direct link was found. Open Revopoint's official download page, then select the installer here?",
+            "No download link found. Open Revopoint's download page in your browser?",
             parent=self.root,
         ):
             webbrowser.open(SUPPORT_PAGE)
@@ -437,7 +430,7 @@ class Launcher:
     def _download_succeeded(self, path: Path, version: str) -> None:
         self._busy = False
         self.set_installer_path(path)
-        self.status.set(f"Downloaded official Revo Scan {version}. Start the installer when ready.")
+        self.status.set(f"Downloaded Revo Scan {version}.")
 
     def _download_failed(self, exc: Exception) -> None:
         self._busy = False
@@ -454,10 +447,10 @@ class Launcher:
         installer = Path(self.installer_path.get()).expanduser()
         wine = self._wine_executable()
         if not installer.is_file():
-            messagebox.showerror("Installer missing", "Choose a valid Windows installer first.", parent=self.root)
+            messagebox.showerror("No installer", "Choose the Revo Scan installer first.", parent=self.root)
             return
         if not wine:
-            messagebox.showerror("Wine missing", "This AppImage does not contain Wine and no system Wine was found.", parent=self.root)
+            messagebox.showerror("Wine missing", "Wine is missing from this build.", parent=self.root)
             return
         self.data_dir.mkdir(parents=True, exist_ok=True)
         env = build_revoscan_environment(self._appdir_for_runtime(), self.prefix, None, None)
@@ -465,7 +458,7 @@ class Launcher:
         env["WINELOADER"] = str(wine)
         try:
             process = subprocess.Popen([str(wine), str(installer)], env=env, cwd=str(installer.parent))
-            self.status.set("Wine installer started. Complete its prompts and accept the vendor terms yourself.")
+            self.status.set("Follow the installer's prompts.")
             self._poll_installer(process)
         except OSError as exc:
             messagebox.showerror("Could not start installer", str(exc), parent=self.root)
@@ -475,18 +468,23 @@ class Launcher:
             self.root.after(1000, lambda: self._poll_installer(process))
             return
         self._refresh_install_state()
-        self.status.set("Installer closed. Revo Scan is ready." if installed_executable(self.prefix).is_file() else "Installer closed. Finish setup or check the installer output.")
+        self.status.set("Installation finished." if installed_executable(self.prefix).is_file() else "Installer closed. Check its output if Revo Scan didn't install.")
 
     def launch_revoscan(self) -> None:
         executable = installed_executable(self.prefix)
         wine = self._wine_executable()
         if not executable.is_file():
-            messagebox.showerror("Revo Scan not installed", "Run the selected installer first.", parent=self.root)
+            messagebox.showerror("Revo Scan not installed", "Install Revo Scan first.", parent=self.root)
             return
         if not wine:
-            messagebox.showerror("Wine missing", "This AppImage does not contain Wine and no system Wine was found.", parent=self.root)
+            messagebox.showerror("Wine missing", "Wine is missing from this build.", parent=self.root)
             return
         adapter, target = self._selected_gpu()
+        if target is not None and mapping_layer_dir(self._appdir_for_runtime()) is None:
+            target = None
+            self.mapping_status.set(
+                "GPU mapping isn't available here — starting without it."
+            )
         try:
             env = build_revoscan_environment(
                 self._appdir_for_runtime(), self.prefix, adapter, target
@@ -494,21 +492,18 @@ class Launcher:
             self._sanitize_prefix(env)
             env["WINELOADER"] = str(wine)
             if target:
-                # Revo Scan's visible GPU list reads DirectX/DXGI, which the
-                # Vulkan layer cannot influence; Wine's Direct3D registry
-                # overrides spoof that side as well.
-                override_report = set_wine_gpu_override(self.prefix, wine, env, target)
-                self.status.set("GPU override registry: " + "; ".join(override_report))
+                # Revo Scan reads its GPU list from DXGI; the wined3d renderer
+                # switch makes that read the layer's mapped Vulkan identity.
+                set_wine_gpu_override(self.prefix, wine, env, target)
             else:
                 clear_wine_gpu_override(self.prefix, wine, env)
             subprocess.Popen([str(wine), str(executable)], env=env, cwd=str(executable.parent))
             if target:
                 self.status.set(
-                    f"Started Revo Scan. Mapping {adapter.name if adapter else 'selected GPU'} to {target.name} "
-                    "(Vulkan identity + Direct3D overrides); verify GPU use in the app."
+                    f"Revo Scan started. GPU reported as {target.name}."
                 )
             else:
-                self.status.set("Started Revo Scan without GPU identity mapping.")
+                self.status.set("Revo Scan started.")
         except (OSError, ValueError) as exc:
             messagebox.showerror("Could not launch Revo Scan", str(exc), parent=self.root)
 
@@ -517,7 +512,7 @@ class Launcher:
         removed = sanitize_bluetooth(self.prefix)
         if removed:
             self.status.set(
-                "Removed Wine Bluetooth driver from the prefix: " + ", ".join(removed)
+                "Adjusted the Wine setup for this launch."
             )
 
     def open_prefix(self) -> None:
@@ -528,13 +523,13 @@ class Launcher:
             gio = shutil.which("gio")
             command = [gio, "open", str(self.prefix)] if gio else None
         if command is None:
-            self.status.set(f"No desktop opener found. Wine prefix: {self.prefix}")
+            self.status.set(f"No file manager found. Data folder: {self.prefix}")
             return
         try:
             subprocess.Popen(command, env=desktop_opener_environment())
-            self.status.set(f"Opening Wine prefix folder: {self.prefix}")
+            self.status.set(f"Opening {self.prefix}")
         except OSError as exc:
-            self.status.set(f"Could not open Wine prefix folder: {exc}. Path: {self.prefix}")
+            self.status.set(f"Couldn't open the data folder: {exc}")
 
 
 def main() -> None:

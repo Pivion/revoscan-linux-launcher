@@ -43,7 +43,11 @@ def check_bundled_wine(output: TextIO) -> int:
     return completed.returncode
 
 
-def check_vulkan_identity(output: TextIO) -> int:
+def check_vulkan_identity(
+    output: TextIO,
+    source=None,
+    target=None,
+) -> int:
     """Report the GPU identity Vulkan consumers see, with mapping applied.
 
     Runs the host ``vulkaninfo --summary`` with the same mapping environment
@@ -61,16 +65,18 @@ def check_vulkan_identity(output: TextIO) -> int:
         return 2
     from revoscan_launcher.gpu import AMD_TARGETS, build_mapping_environment, detect_adapters
 
-    try:
-        adapters = detect_adapters()
-    except Exception as exc:  # pragma: no cover - defensive
-        print(f"GPU detection failed: {exc}", file=output)
-        return 1
-    source = next((a for a in adapters if a.vendor in {"amd", "intel"}), None)
     if source is None:
-        print("No AMD or Intel adapter detected; nothing to map.", file=output)
-        return 0
-    target = AMD_TARGETS["intel-b580"]
+        try:
+            adapters = detect_adapters()
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"GPU detection failed: {exc}", file=output)
+            return 1
+        source = next((a for a in adapters if a.vendor in {"amd", "intel"}), None)
+        if source is None:
+            print("No AMD or Intel adapter detected; nothing to map.", file=output)
+            return 0
+    if target is None:
+        target = AMD_TARGETS["intel-b580"]
     mapping_env = build_mapping_environment(source, target)
     mapping_env["VK_INSTANCE_LAYERS"] = "VK_LAYER_REVOSCAN_LINUX_GPU_MAP"
     appdir = os.environ.get("APPDIR")
