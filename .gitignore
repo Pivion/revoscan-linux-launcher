@@ -6,6 +6,7 @@
 /build/
 /dist/*.AppImage
 /dist/*.tar.*
+/dist/SHA256SUMS
 /tools/cache/**
 
 # User content, credentials, logs, and runtime state.
