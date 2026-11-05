@@ -14,6 +14,8 @@ int apply_gpu_map(VkPhysicalDeviceProperties *properties, const GpuMap *mapping)
         !memchr(mapping->target_name, '\0', sizeof(mapping->target_name))) return 0;
 
     properties->vendorID = mapping->target_vendor_id;
+    if (mapping->target_device_id != 0)
+        properties->deviceID = mapping->target_device_id;
     properties->deviceType = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
     snprintf(properties->deviceName, sizeof(properties->deviceName), "%s", mapping->target_name);
     return 1;

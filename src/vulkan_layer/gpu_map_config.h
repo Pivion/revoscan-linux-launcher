@@ -8,6 +8,7 @@ int parse_gpu_map(const char *source_vendor,
                   const char *source_device,
                   const char *target_vendor,
                   const char *target_name,
+                  const char *target_device,
                   GpuMap *mapping);
 
 #endif

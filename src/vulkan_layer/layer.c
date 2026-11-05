@@ -28,6 +28,7 @@ static void load_mapping_from_env(void) {
                        getenv("REVOSCAN_MAP_SOURCE_DEVICE"),
                        getenv("REVOSCAN_MAP_TARGET_VENDOR"),
                        getenv("REVOSCAN_MAP_TARGET_NAME"),
+                       getenv("REVOSCAN_MAP_TARGET_DEVICE"),
                        &g_mapping)) {
         memset(&g_mapping, 0, sizeof(g_mapping));
         return;

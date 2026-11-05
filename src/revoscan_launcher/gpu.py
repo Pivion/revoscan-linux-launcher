@@ -115,5 +115,6 @@ def build_mapping_environment(
         "REVOSCAN_MAP_SOURCE_VENDOR": f"{source.vendor_id:04x}",
         "REVOSCAN_MAP_SOURCE_DEVICE": f"{source.device_id:04x}",
         "REVOSCAN_MAP_TARGET_VENDOR": f"{target.vendor_id:04x}",
+        "REVOSCAN_MAP_TARGET_DEVICE": f"{target.device_id:04x}",
         "REVOSCAN_MAP_TARGET_NAME": target.name,
     }

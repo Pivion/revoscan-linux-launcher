@@ -12,6 +12,7 @@ typedef struct GpuMap {
     uint32_t source_vendor_id;
     uint32_t source_device_id;
     uint32_t target_vendor_id;
+    uint32_t target_device_id;
     char target_name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
 } GpuMap;
 

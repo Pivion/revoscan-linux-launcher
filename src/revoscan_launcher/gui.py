@@ -189,9 +189,20 @@ class Launcher:
             wraplength=720,
         ).pack(anchor="w", pady=(10, 0))
 
+    def _runtime_appdir(self) -> Path | None:
+        """AppImage dir when running from the AppImage, else the extracted
+        per-user runtime (~/.local/share/revoscan-linux-launcher/appdir)."""
+        if self.appdir and (self.appdir / "usr/bin/wine64").is_file():
+            return self.appdir
+        extracted = self.data_dir / "appdir"
+        if (extracted / "usr/bin/wine64").is_file():
+            return extracted
+        return None
+
     def _wine_executable(self) -> Path | None:
-        if self.appdir:
-            candidate = self.appdir / "usr/bin/wine64"
+        appdir = self._runtime_appdir()
+        if appdir:
+            candidate = appdir / "usr/bin/wine64"
             if candidate.is_file():
                 return candidate
         for candidate in (shutil.which("wine64"), shutil.which("wine")):
@@ -200,7 +211,7 @@ class Launcher:
         return None
 
     def _appdir_for_runtime(self) -> Path:
-        return self.appdir if self.appdir else Path("/")
+        return self._runtime_appdir() or Path("/")
 
     def _selected_gpu(self) -> tuple[GpuAdapter | None, GpuTarget | None]:
         index = self.adapter_combo.current()
