@@ -73,14 +73,25 @@ def check_vulkan_identity(output: TextIO) -> int:
     target = AMD_TARGETS["rx-7700-xt"]
     mapping_env = build_mapping_environment(source, target)
     mapping_env["VK_INSTANCE_LAYERS"] = "VK_LAYER_REVOSCAN_LINUX_GPU_MAP"
+    appdir = os.environ.get("APPDIR")
+    if appdir:
+        # Inside the AppImage the layer manifest lives in the bundled layer
+        # dir; an ambient VK_LAYER_PATH could otherwise shadow it.
+        mapping_env["VK_LAYER_PATH"] = str(Path(appdir) / "usr/share/vulkan/explicit_layer.d")
     print(
         f"Mapping profile: {source.identity} ({source.name}) -> {target.name}",
         file=output,
     )
+    run_env = {**os.environ, **mapping_env}
+    if not appdir:
+        # Outside the AppImage, an ambient VK_LAYER_PATH (often a stale path
+        # from other tooling) shadows the default layer search paths and
+        # silently hides the layer. Drop it so defaults are scanned.
+        run_env.pop("VK_LAYER_PATH", None)
     try:
         completed = subprocess.run(
             ["vulkaninfo", "--summary"],
-            env={**os.environ, **mapping_env},
+            env=run_env,
             capture_output=True,
             text=True,
             timeout=60,
@@ -93,12 +104,17 @@ def check_vulkan_identity(output: TextIO) -> int:
     for line in summary.splitlines():
         if "vendorID" in line or "deviceID" in line or "deviceName" in line:
             print(line.strip(), file=output)
-    if target is not None:
-        print(f"Mapping target requested: {target.name}", file=output)
+    applied = any(
+        f"0x{target.vendor_id:04x}" in line and "vendorID" in line
+        for line in summary.splitlines()
+    )
+    print(f"Mapping target requested: {target.name}", file=output)
+    if applied:
+        print("Mapping applied: the reported identity is the mapped target.", file=output)
+    else:
         print(
-            "Note: under Wine, explicit Vulkan layers are enumerated but not chained, "
-            "so this identity is what the host sees; Revo Scan running under Wine may still "
-            "report its real GPU.",
+            "WARNING: mapping did not apply. Check that the Vulkan layer manifest is "
+            "discoverable (VK_LAYER_PATH) and that VK_INSTANCE_LAYERS names the layer.",
             file=output,
         )
     return completed.returncode
