@@ -1,0 +1,149 @@
+"""Scanner Wi-Fi discovery and connection via nmcli.
+
+Revopoint scanners (POP series, MIRACO) expose an access point whose SSID
+looks like ``POP4-REVO-D2682977``. The launcher connects a spare Wi-Fi adapter
+to that AP so Revo Scan (running under Wine, sharing the host network stack)
+can reach the scanner while the primary adapter keeps internet access. The
+scanner connection is marked ``never-default`` so it never hijacks the host
+default route.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import re
+import subprocess
+
+SCANNER_SSID_PATTERN = re.compile(r"revo|revopoint|miraco|pop\s?\d", re.IGNORECASE)
+
+
+def is_scanner_ssid(ssid: str) -> bool:
+    """Match the AP names Revopoint scanners broadcast."""
+    return bool(ssid) and bool(SCANNER_SSID_PATTERN.search(ssid))
+
+
+@dataclass(frozen=True)
+class WifiNetwork:
+    ssid: str
+    bssid: str
+    security: str
+    signal: int
+    channel: int
+
+    @property
+    def is_scanner(self) -> bool:
+        return is_scanner_ssid(self.ssid)
+
+
+@dataclass(frozen=True)
+class WifiDevice:
+    device: str
+    state: str
+    connection: str
+
+
+def _run(args: list[str], timeout: float = 30.0) -> str:
+    return subprocess.run(
+        args, capture_output=True, text=True, timeout=timeout, check=False
+    ).stdout
+
+
+def wifi_devices(runner=_run) -> list[WifiDevice]:
+    out = runner(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"])
+    devices: list[WifiDevice] = []
+    for line in out.splitlines():
+        fields = line.split(":")
+        if len(fields) < 4:
+            continue
+        device, dev_type, state = fields[0], fields[1], fields[2]
+        connection = ":".join(fields[3:])
+        if dev_type != "wifi" or device.startswith("p2p-"):
+            continue
+        devices.append(WifiDevice(device, state, connection))
+    return devices
+
+
+def scan_networks(device: str | None = None, runner=_run) -> list[WifiNetwork]:
+    args = ["nmcli", "-t", "-f", "SSID,BSSID,SECURITY,SIGNAL,CHAN", "device", "wifi", "list"]
+    if device:
+        args += ["ifname", device]
+    out = runner(args)
+    networks: dict[str, WifiNetwork] = {}
+    for line in out.splitlines():
+        # nmcli -t emits 5 fields; literal colons (BSSID, SSID) are "\:"-escaped, so
+        # placeholder them out before splitting.
+        fields = [field.replace("\x00", ":") for field in line.replace("\\:", "\x00").split(":")]
+        if len(fields) < 5:
+            continue
+        ssid, bssid, security, signal, channel = fields[:5]
+        if not ssid:
+            continue
+        try:
+            signal_value = int(signal)
+            channel_value = int(channel)
+        except ValueError:
+            continue
+        network = WifiNetwork(ssid, bssid, security, signal_value, channel_value)
+        previous = networks.get(ssid)
+        # Keep the strongest BSSID per SSID.
+        if previous is None or signal_value > previous.signal:
+            networks[ssid] = network
+    return sorted(networks.values(), key=lambda net: -net.signal)
+
+
+def find_scanner_network(networks: list[WifiNetwork]) -> WifiNetwork | None:
+    scanner = [net for net in networks if net.is_scanner]
+    return max(scanner, key=lambda net: net.signal, default=None)
+
+
+def _uuid_for_device(device: str, runner=_run) -> str | None:
+    out = runner(["nmcli", "-t", "-f", "DEVICE,UUID", "connection", "show", "--active"])
+    for line in out.splitlines():
+        fields = line.split(":")
+        if len(fields) >= 2 and fields[0] == device:
+            return fields[1]
+    return None
+
+
+def make_connection_never_default(device: str, runner=_run) -> bool:
+    """Stop the scanner connection from owning the host default route."""
+    uuid = _uuid_for_device(device, runner)
+    if not uuid:
+        return False
+    runner(["nmcli", "connection", "modify", uuid, "ipv4.never-default", "yes"])
+    runner(["nmcli", "connection", "modify", uuid, "ipv6.never-default", "yes"])
+    return True
+
+
+def connect_network(device: str, ssid: str, runner=_run, secret: str | None = None) -> bool:
+    args = ["nmcli", "device", "wifi", "connect", ssid, "ifname", device]
+    if secret:
+        args += ["password", secret]
+    out = runner(args)
+    ok = "successfully activated" in out
+    if ok:
+        make_connection_never_default(device, runner)
+    return ok
+
+
+def default_route_device(runner=_run) -> str | None:
+    out = runner(["ip", "route", "show", "default"])
+    for line in out.splitlines():
+        fields = line.split()
+        if "dev" in fields:
+            return fields[fields.index("dev") + 1]
+    return None
+
+
+def scanner_reachable(address: str, runner=_run) -> bool:
+    out = runner(["ping", "-c", "1", "-W", "2", address])
+    return " 0% packet loss" in out
+
+
+def device_gateway(device: str, runner=_run) -> str | None:
+    out = runner(["nmcli", "-t", "-f", "IP4.GATEWAY", "device", "show", device])
+    for line in out.splitlines():
+        value = line.split(":", 1)[1].strip() if ":" in line else ""
+        if value:
+            return value
+    return None

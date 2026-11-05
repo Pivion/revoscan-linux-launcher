@@ -17,6 +17,17 @@ from .installer import (
     download_official_installer,
     fetch_latest_official_installer,
 )
+from .network import (
+    WifiDevice,
+    WifiNetwork,
+    connect_network,
+    default_route_device,
+    find_scanner_network,
+    scan_networks,
+    scanner_reachable,
+    device_gateway,
+    wifi_devices,
+)
 from .runtime import build_revoscan_environment, installed_executable, sanitize_bluetooth
 
 
@@ -39,8 +50,8 @@ class Launcher:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Revo Scan for Linux — unofficial launcher")
-        self.root.geometry("780x610")
-        self.root.minsize(700, 560)
+        self.root.geometry("780x760")
+        self.root.minsize(700, 700)
         self.root.option_add("*Font", "Sans 10")
 
         self.appdir = Path(os.environ["APPDIR"]) if os.environ.get("APPDIR") else None
@@ -58,6 +69,7 @@ class Launcher:
 
         self._build_ui()
         self.refresh_adapters()
+        self.refresh_wifi_devices()
         self._refresh_install_state()
 
     def _build_ui(self) -> None:
@@ -88,7 +100,7 @@ class Launcher:
             wraplength=700,
         ).pack(anchor="w", pady=(8, 0))
 
-        gpu_box = ttk.LabelFrame(outer, text="2 · Optional GPU identity mapping (experimental)", padding=12)
+        gpu_box = ttk.LabelFrame(outer, text="3 · Optional GPU identity mapping (experimental)", padding=12)
         gpu_box.pack(fill="x", pady=(0, 12))
         adapter_row = ttk.Frame(gpu_box)
         adapter_row.pack(fill="x")
@@ -126,7 +138,24 @@ class Launcher:
             wraplength=700,
         ).pack(anchor="w", pady=(8, 0))
 
-        run_box = ttk.LabelFrame(outer, text="3 · Install or launch", padding=12)
+        gpu_box = ttk.LabelFrame(outer, text="2 · Scanner Wi-Fi", padding=12)
+        gpu_box.pack(fill="x", pady=(0, 12))
+        device_row = ttk.Frame(gpu_box)
+        device_row.pack(fill="x")
+        ttk.Label(device_row, text="Wi-Fi adapter:").pack(side="left")
+        self.device_combo = ttk.Combobox(device_row, state="readonly", width=44)
+        self.device_combo.pack(side="left", fill="x", expand=True, padx=8)
+        ttk.Button(device_row, text="Refresh", command=self.refresh_wifi_devices).pack(side="left")
+        wifi_row = ttk.Frame(gpu_box)
+        wifi_row.pack(fill="x", pady=(8, 0))
+        ttk.Button(wifi_row, text="Scan for scanner network", command=self.scan_for_scanner).pack(side="left")
+        self.connect_button = ttk.Button(wifi_row, text="Connect scanner network", command=self.connect_scanner, state="disabled")
+        self.connect_button.pack(side="left", padx=8)
+        self.wifi_status = tk.StringVar(value="Scan to find the scanner's access point (SSID like POP4-REVO-…).")
+        ttk.Label(gpu_box, textvariable=self.wifi_status, wraplength=700).pack(anchor="w", pady=(8, 0))
+        self.scanner_networks: list[WifiNetwork] = []
+
+        run_box = ttk.LabelFrame(outer, text="4 · Install or launch", padding=12)
         run_box.pack(fill="x", pady=(0, 12))
         run_row = ttk.Frame(run_box)
         run_row.pack(fill="x")
@@ -192,6 +221,103 @@ class Launcher:
         self.target_combo.configure(state="readonly" if enabled else "disabled")
         if self.mapping_enabled.get() and not supported:
             self.status.set("Mapping supports AMD or Intel source adapters; choose one or leave mapping disabled.")
+
+    def refresh_wifi_devices(self) -> None:
+        try:
+            self.wifi_devices: list[WifiDevice] = wifi_devices()
+        except (OSError, subprocess.SubprocessError):
+            self.wifi_devices = []
+        labels = [
+            f"{d.device} · {d.state} · {d.connection or 'not connected'}" for d in self.wifi_devices
+        ]
+        self.device_combo["values"] = labels
+        if labels:
+            self.device_combo.current(0)
+        else:
+            self.device_combo.set("No Wi-Fi adapter found (NetworkManager required)")
+            self.wifi_status.set("NetworkManager is required for scanner Wi-Fi management.")
+
+    def _selected_wifi_device(self) -> str | None:
+        index = self.device_combo.current()
+        if 0 <= index < len(getattr(self, "wifi_devices", [])):
+            return self.wifi_devices[index].device
+        return None
+
+    def scan_for_scanner(self) -> None:
+        device = self._selected_wifi_device()
+        if not device:
+            self.wifi_status.set("Select a Wi-Fi adapter first.")
+            return
+        self.wifi_status.set(f"Scanning Wi-Fi networks on {device}…")
+        threading.Thread(target=self._wifi_scan_worker, args=(device,), daemon=True).start()
+
+    def _wifi_scan_worker(self, device: str) -> None:
+        try:
+            networks = scan_networks(device)
+        except Exception as exc:
+            self.root.after(0, lambda error=exc: self.wifi_status.set(f"Wi-Fi scan failed: {error}"))
+            return
+        self.root.after(0, lambda: self._wifi_scan_done(networks))
+
+    def _wifi_scan_done(self, networks: list[WifiNetwork]) -> None:
+        self.scanner_networks = networks
+        scanner = find_scanner_network(networks)
+        if scanner:
+            self.wifi_status.set(
+                f"Scanner network found: {scanner.ssid} (BSSID {scanner.bssid}, "
+                f"channel {scanner.channel}, security {scanner.security or 'open'}, signal {scanner.signal})."
+            )
+            self.connect_button.configure(state="normal")
+        else:
+            self.wifi_status.set(
+                "No scanner access point found. Power the scanner on and make sure its Wi-Fi/AP mode is enabled, then scan again."
+            )
+            self.connect_button.configure(state="disabled")
+
+    def connect_scanner(self) -> None:
+        device = self._selected_wifi_device()
+        if not device:
+            self.wifi_status.set("Select a Wi-Fi adapter first.")
+            return
+        scanner = find_scanner_network(self.scanner_networks)
+        if not scanner:
+            self.wifi_status.set("Scan for the scanner network first.")
+            return
+        self.connect_button.configure(state="disabled")
+        self.wifi_status.set(f"Connecting {device} to {scanner.ssid}…")
+        threading.Thread(target=self._wifi_connect_worker, args=(device, scanner), daemon=True).start()
+
+    def _wifi_connect_worker(self, device: str, scanner: WifiNetwork) -> None:
+        try:
+            ok = connect_network(device, scanner.ssid)
+            gateway = device_gateway(device) if ok else None
+            reachable = scanner_reachable(gateway) if gateway else False
+            route_owner = default_route_device() if ok else None
+        except Exception as exc:
+            self.root.after(0, lambda error=exc: self.wifi_status.set(f"Connection failed: {error}"))
+            return
+        self.root.after(0, lambda: self._wifi_connect_done(device, scanner, ok, gateway, reachable, route_owner))
+
+    def _wifi_connect_done(
+        self, device: str, scanner: WifiNetwork, ok: bool, gateway: str | None, reachable: bool, route_owner: str | None
+    ) -> None:
+        if not ok:
+            self.wifi_status.set(f"Could not connect {device} to {scanner.ssid}. Check the network password or adapter state.")
+            self.connect_button.configure(state="normal")
+            return
+        notes = []
+        if reachable:
+            notes.append(f"scanner reachable at {gateway}")
+        else:
+            notes.append("scanner gateway not responding yet (it may take a few seconds)")
+        if route_owner and route_owner != device:
+            notes.append(f"internet default route stays on {route_owner}")
+        elif route_owner == device:
+            notes.append("WARNING: the scanner connection owns the default route")
+        self.wifi_status.set(
+            f"Connected {device} to {scanner.ssid}: " + "; ".join(notes) + ". Launch Revo Scan next."
+        )
+        self.refresh_wifi_devices()
 
     def set_installer_path(self, path: str | Path) -> None:
         self.installer_path.set(str(path))
